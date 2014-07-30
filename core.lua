@@ -25,25 +25,23 @@ local GetNumMacros = GetNumMacros
 local HideUIPanel = HideUIPanel
 local hooksecurefunc = hooksecurefunc
 local ipairs = ipairs
-local Is64BitClient = Is64BitClient
 local IsModifiedClick = IsModifiedClick
+local MacroFrame = MacroFrame
 local math = math
-local MAX_ACCOUNT_MACROS = MAX_ACCOUNT_MACROS or 36 -- LOD
-local OKAY = OKAY
+local MAX_ACCOUNT_MACROS = MAX_ACCOUNT_MACROS or 120 -- LOD
 local pairs = pairs
+local PET_BATTLE_PET_TYPE_PASSIVES = PET_BATTLE_PET_TYPE_PASSIVES
+local PET_TYPE_SUFFIX = PET_TYPE_SUFFIX
 local PickupMacro = PickupMacro
 local PlaySound = PlaySound
 local print = print
 local select = select
 local SetItemButtonCount = SetItemButtonCount
-local SetItemButtonNormalTextureVertexColor = SetItemButtonNormalTextureVertexColor
 local SetItemButtonTexture = SetItemButtonTexture
-local SetItemButtonTextureVertexColor = SetItemButtonTextureVertexColor
 local StaticPopup_Hide = StaticPopup_Hide
 local StaticPopup_Show = StaticPopup_Show
 local StaticPopupDialogs = StaticPopupDialogs
 local strlen = strlen
-local strlower = strlower
 local table = table
 local time = time
 local tonumber = tonumber
@@ -66,10 +64,7 @@ local Watcher_OnUpdate
 local Update
 local Initialize
 
-local EMPTY_PET_X64 = "0x0000000000000000"
-local EMPTY_PET_X86 = "0x00000000"
-local EMPTY_PET = "0x0000"
-local EMPTY_PET_DYNAMIC = EMPTY_PET_X64 -- Is64BitClient() and EMPTY_PET_X64 or EMPTY_PET_X86
+local EMPTY_PET = "BattlePet:0:000000000000"
 
 local MAX_ACTIVE_PETS = 3
 local MAX_ACTIVE_ABILITIES = 3
@@ -264,8 +259,8 @@ do
 	end
 end --]] --_G.ValidatePetSmartly = ValidatePetSmartly -- /run ValidatePetSmartly:Check("0x0000000000000000") -- DEBUG
 
-local function ValidatePetId(petId, petCheck, isValidating)
-	if type(petId) == "string" and strlen(petId) >= 10 and (not Is64BitClient() or strlen(petId) >= 18) then -- x86 is 8+2 while x64 is 16+2
+local function ValidatePetId(petId, petCheck, isValidating) -- WOD: isValidating?
+	if type(petId) == "string" and strlen(petId) >= 24 and select(2, petId:gsub(":", "")) == 2 then -- the new WOD format is 24 characters and contains two separators
 		if petCheck then
 			return C_PetJournal_GetPetInfoByPetID(petId)
 		end
@@ -291,7 +286,7 @@ local function ValidateTeam(teamId, attemptFix)
 			local petData = team.setup[index]
 			if type(petData) ~= "table" then
 				if attemptFix then
-					team.setup[index] = {EMPTY_PET_DYNAMIC, 0, 0, 0}
+					team.setup[index] = {EMPTY_PET, 0, 0, 0}
 					petData = team.setup[index]
 				else
 					return
@@ -300,7 +295,7 @@ local function ValidateTeam(teamId, attemptFix)
 			local petId, ab1, ab2, ab3 = petData[1], petData[2], petData[3], petData[4]
 			if not ValidatePetId(petId, 1, 1) then
 				if attemptFix then
-					team.setup[index] = {EMPTY_PET_DYNAMIC, 0, 0, 0}
+					team.setup[index] = {EMPTY_PET, 0, 0, 0}
 				else
 					return
 				end
@@ -449,7 +444,7 @@ local function UpdateCurrentTeam(teamId)
 		end
 	end
 	for i = MAX_ACTIVE_PETS - #team.setup, 1, -1 do
-		table.insert(team.setup, {EMPTY_PET_DYNAMIC, 0, 0, 0})
+		table.insert(team.setup, {EMPTY_PET, 0, 0, 0})
 	end
 	team.icon = nil
 	for _, petData in ipairs(team.setup) do
@@ -483,25 +478,21 @@ function LoadTeam(teamId) -- local
 		return
 	end
 	local team = BattlePetTabsDB2[teamId]
-	local pets, count, emptyCount, unhook, loadoutId = {}, 0, 0
+	local pets, count, emptyCount, unhook, loadoutId, _, locked = {}, 0, 0
 	for i = 1, MAX_ACTIVE_PETS do
 		local petData = team.setup[i]
 		if type(petData) == "table" then
 			local petId, ab1, ab2, ab3 = petData[1], petData[2], petData[3], petData[4]
-			petId = strlower(petId)
-			loadoutId = C_PetJournal_GetPetLoadOutInfo(i)
-			if loadoutId then
-				loadoutId = strlower(loadoutId)
-			end
-			if petId == loadoutId or ((petId == "" or petId == EMPTY_PET_X64 or petId == EMPTY_PET_X86 or petId == EMPTY_PET) and not loadoutId) then
+			loadoutId, _, _, _, locked = C_PetJournal_GetPetLoadOutInfo(i)
+			if petId == loadoutId or (not loadoutId and (petId == "" or petId == EMPTY_PET)) or locked then
 				count = count + 1
-				if not loadoutId then
+				if not loadoutId or locked then
 					emptyCount = emptyCount + 1
 				end
 			elseif ValidatePetId(petId, 1) then
 				C_PetJournal_SetPetLoadOutInfo(i, petId, addonName)
 			else
-				C_PetJournal_SetPetLoadOutInfo(i, EMPTY_PET_DYNAMIC, addonName)
+				C_PetJournal_SetPetLoadOutInfo(i, EMPTY_PET, addonName)
 			end
 			table.insert(pets, {petId, ab1, ab2, ab3})
 		end
@@ -511,7 +502,7 @@ function LoadTeam(teamId) -- local
 		count = 0
 		for i, petData in ipairs(pets) do
 			local petId = petData[1]
-			if petId == "" or petId == EMPTY_PET_X64 or petId == EMPTY_PET_X86 or petId == EMPTY_PET then
+			if petId == "" or petId == EMPTY_PET then
 				count = count + MAX_ACTIVE_ABILITIES
 			else
 				for j = 1, MAX_ACTIVE_ABILITIES do
@@ -1087,73 +1078,6 @@ end
 function Initialize() -- local
 	Initialize = function() end
 
-	-- conversion between old and new structure
-	-- [[
-	do
-		if type(BattlePetTabsDB) == "table" then
-			for index = 1, numTabs do
-				local team = BattlePetTabsDB[index]
-				if type(team) == "table" then
-					local newTeam = {}
-					local emptyPets = 0
-					if type(team.name) == "string" then
-						newTeam.name = team.name
-					else
-						newTeam.name = "Team " .. index
-					end
-					newTeam.setup = {}
-					if type(team.team) == "table" then
-						for i = 1, MAX_ACTIVE_PETS do
-							local petId = team.team[i]
-							if ValidatePetId(petId, 1) then
-								newTeam.setup[i] = {petId, 0, 0, 0}
-							else
-								newTeam.setup[i] = {EMPTY_PET_DYNAMIC, 0, 0, 0}
-								emptyPets = emptyPets + 1
-							end
-						end
-						if type(team.team2) == "table" then
-							for i = 1, MAX_ACTIVE_PETS do
-								if type(team.team2[i]) == "table" then
-									for j = 1, MAX_ACTIVE_ABILITIES do
-										newTeam.setup[i][1 + j] = tonumber(team.team2[i][j]) or 0
-									end
-								end
-							end
-						end
-					else
-						for i = 1, MAX_ACTIVE_PETS do
-							newTeam.setup[i] = {EMPTY_PET_DYNAMIC, 0, 0, 0}
-							emptyPets = emptyPets + 1
-						end
-					end
-					if type(team.icon) == "string" then
-						newTeam.icon = team.icon
-					else
-						for _, petData in ipairs(newTeam.setup) do
-							local petId = petData[1]
-							if ValidatePetId(petId, 1) then
-								newTeam.icon = select(9, C_PetJournal_GetPetInfoByPetID(petId))
-								if newTeam.icon then
-									break
-								end
-							end
-						end
-						if not newTeam.icon then
-							newTeam.icon = "Interface\\Icons\\INV_Misc_QuestionMark.blp"
-						end
-					end
-					if emptyPets < 3 then
-						BattlePetTabsDB2[index] = newTeam
-					end
-				end
-			end
-			BattlePetTabsDB2.currentId = tonumber(BattlePetTabsDB.currentId) or 1
-			BattlePetTabsDB = nil
-		end
-	end
-	-- ]]
-
 	StaticPopupDialogs["BATTLETABS_TEAM_RENAME"] = {
 		text = "What do you wish to rename |cffffd200%s|r to?",
 		button1 = ACCEPT,
@@ -1273,43 +1197,6 @@ function Initialize() -- local
 	addon:RegisterEvent("PLAYER_REGEN_ENABLED")
 
 	addon:HookScript("OnEvent", Update)
-
-	-- (bonus feature) allows you to modify right-click the avatar of the pets in the loadout and confirm their removal from the team (allows you to have a true 2v or 1v teams)
-	-- [[
-	do
-		StaticPopupDialogs["BATTLETABS_REMOVE_MEMBER"] = {
-			text = "Are you sure you wish to remove |cffffd200%s|r from the team?",
-			button1 = ACCEPT,
-			button2 = CANCEL,
-			OnAccept = function(self)
-				C_PetJournal_SetPetLoadOutInfo(self.data, EMPTY_PET_DYNAMIC)
-				UpdateCurrentTeam()
-			end,
-			timeout = 0,
-			exclusive = 1,
-			hideOnEscape = 1,
-		}
-
-		hooksecurefunc("PetJournalPetLoadoutDragButton_OnClick", function(self, button)
-			local loadout = self:GetParent()
-			if button == "RightButton" and loadout.petID and IsModifiedClick() then
-				local slot = loadout:GetID()
-				local _, customName, _, _, _, _, _, name = C_PetJournal_GetPetInfoByPetID(C_PetJournal_GetPetLoadOutInfo(slot))
-				local alone = 1
-				for i = 1, MAX_ACTIVE_PETS do
-					if i ~= slot and C_PetJournal_GetPetLoadOutInfo(i) then
-						alone = nil
-						break
-					end
-				end
-				if not alone then
-					PetJournal_HidePetDropdown()
-					StaticPopup_Show("BATTLETABS_REMOVE_MEMBER", customName or name, nil, slot)
-				end
-			end
-		end)
-	end
-	-- ]]
 
 	Update()
 end
