@@ -230,37 +230,8 @@ local function GetTeamId(teamId)
 	return 1 -- fallback
 end
 
---[[ desperate times call for desperate measures
-local ValidatePetSmartly
-do
-	local MAX_FAILS = 3
-	local CHECK_INTERVAL = 1
-	ValidatePetSmartly = {}
-
-	function ValidatePetSmartly:Check(petId)
-		if not self[petId] then
-			self[petId] = {time(), 1}
-		end
-		if C_PetJournal_GetPetInfoByPetID(petId) then
-			self[petId] = nil
-			return 1
-		end
-		if self[petId][2] > MAX_FAILS then
-			self[petId] = nil
-			--print("DEBUG", "VPS:C(", petId, ") = FAIL") -- DEBUG
-			return nil
-		end
-		if time() - self[petId][1] > CHECK_INTERVAL then
-			self[petId][1] = time()
-			self[petId][2] = self[petId][2] + 1
-			--print("DEBUG", "VPS:C(", petId, ") =", self[petId][2]) -- DEBUG
-		end
-		return self[petId][2]
-	end
-end --]] --_G.ValidatePetSmartly = ValidatePetSmartly -- /run ValidatePetSmartly:Check("0x0000000000000000") -- DEBUG
-
 local function ValidatePetId(petId, petCheck, isValidating) -- WOD: isValidating?
-	if type(petId) == "string" and strlen(petId) >= 24 and select(2, petId:gsub(":", "")) == 2 then -- the new WOD format is 24 characters and contains two separators
+	if type(petId) == "string" and strlen(petId) >= strlen(EMPTY_PET) and select(2, petId:gsub(":", "")) >= 2 then -- the new WOD format is 24 characters and contains two separators
 		if petCheck then
 			return C_PetJournal_GetPetInfoByPetID(petId)
 		end
@@ -604,7 +575,7 @@ local function UpdateLock()
 end
 
 function Update() -- local
-	IntegrityCheck()
+	-- IntegrityCheck() -- disabled for the moment
 	local shownNewTeam
 	for i = 1, numTabs do
 		local team = BattlePetTabsDB2[i] or {}
