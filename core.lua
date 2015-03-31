@@ -1,1173 +1,996 @@
 local _G = _G
-local C_PetBattles = C_PetBattles
-local C_PetBattles_GetAbilityInfoByID = C_PetBattles.GetAbilityInfoByID
-local C_PetBattles_GetAttackModifier = C_PetBattles.GetAttackModifier
-local C_PetBattles_GetPVPMatchmakingInfo = C_PetBattles.GetPVPMatchmakingInfo
-local C_PetBattles_IsInBattle = C_PetBattles.IsInBattle
+local assert = assert
 local C_PetJournal = C_PetJournal
-local C_PetJournal_GetNumPetTypes = C_PetJournal.GetNumPetTypes
 local C_PetJournal_GetPetInfoByPetID = C_PetJournal.GetPetInfoByPetID
-local C_PetJournal_GetPetInfoBySpeciesID = C_PetJournal.GetPetInfoBySpeciesID
 local C_PetJournal_GetPetLoadOutInfo = C_PetJournal.GetPetLoadOutInfo
-local C_PetJournal_IsJournalUnlocked = C_PetJournal.IsJournalUnlocked
+local C_PetJournal_GetPetStats = C_PetJournal.GetPetStats
+local C_PetJournal_PickupPet = C_PetJournal.PickupPet
 local C_PetJournal_SetAbility = C_PetJournal.SetAbility
 local C_PetJournal_SetPetLoadOutInfo = C_PetJournal.SetPetLoadOutInfo
-local ChatEdit_FocusActiveWindow = ChatEdit_FocusActiveWindow
+local C_Timer_After = C_Timer.After
 local ClearCursor = ClearCursor
 local CreateFrame = CreateFrame
-local CreateMacro = CreateMacro
-local DeleteMacro = DeleteMacro
-local EditMacro = EditMacro
-local GameTooltip = GameTooltip
-local GetMacroIndexByName = GetMacroIndexByName
-local GetMouseFocus = GetMouseFocus
-local GetNumMacros = GetNumMacros
-local HideUIPanel = HideUIPanel
-local hooksecurefunc = hooksecurefunc
+local format = format
+local GetAddOnInfo = GetAddOnInfo
 local ipairs = ipairs
-local IsModifiedClick = IsModifiedClick
-local MacroFrame = MacroFrame
+local IsAddOnLoaded = IsAddOnLoaded
 local math = math
-local MAX_ACCOUNT_MACROS = MAX_ACCOUNT_MACROS or 120 -- LOD
+local next = next
 local pairs = pairs
-local PET_BATTLE_PET_TYPE_PASSIVES = PET_BATTLE_PET_TYPE_PASSIVES
-local PET_TYPE_SUFFIX = PET_TYPE_SUFFIX
-local PickupMacro = PickupMacro
-local PlaySound = PlaySound
-local print = print
-local select = select
-local SetItemButtonCount = SetItemButtonCount
-local SetItemButtonTexture = SetItemButtonTexture
-local StaticPopup_Hide = StaticPopup_Hide
-local StaticPopup_Show = StaticPopup_Show
-local StaticPopupDialogs = StaticPopupDialogs
-local strlen = strlen
 local table = table
-local time = time
 local tonumber = tonumber
 local type = type
-local unpack = unpack
 
 local addonName = ...
 local addon = CreateFrame("Frame")
-local frameName = "BattlePetTabs"
-local petJournalAddonName = "Blizzard_PetJournal"
-local numTabs = 8 -- hardcoded tab limit (so they don't grow outside the journal frame)
-BattlePetTabsDB2 = type(BattlePetTabsDB2) == "table" and BattlePetTabsDB2 or {}
-BattlePetTabsSnapshotDB = type(BattlePetTabsSnapshotDB) == "table" and BattlePetTabsSnapshotDB or {}
+addon:SetScript("OnEvent", function(self, event, ...) self[event](self, event, ...) end)
+addon:RegisterEvent("ADDON_LOADED")
 
-local watcher = CreateFrame("Frame")
-local elapsed = 0
+-- variables
+local MAX_BATTLE_TABS = 10 -- 8 to 10 for most natural results
+local MAX_ACTIVE_PETS = MAX_ACTIVE_PETS or 3
+local BATTLEPETTABSFLYOUT_BORDERWIDTH = 0
+local BATTLEPETTABSFLYOUT_ITEM_HEIGHT = 35
+local BATTLEPETTABSFLYOUT_ITEM_WIDTH = 35
+local BATTLEPETTABSFLYOUT_ITEM_XOFFSET = 4
+local BATTLEPETTABSFLYOUT_ITEM_YOFFSET = -6
+local BATTLEPETTABSFLYOUT_ITEMS_PER_ROW = 5
+local BATTLEPETTABSFLYOUT_MAX_ITEMS = 65
+local FLYOUT_COMMAND_NEW = 1
+local FLYOUT_COMMAND_MOVETO = 2
+local FLYOUT_COMMAND_RENAME = 3
+local FLYOUT_COMMAND_DELETE = 4
+local FLYOUT_COMMAND_TEAM = 5
 
-local LoadTeam
-local Watcher_OnUpdate
-local Update
-local Initialize
-
-local EMPTY_PET = "BattlePet:0:000000000000"
-
-local MAX_ACTIVE_PETS = 3
-local MAX_ACTIVE_ABILITIES = 3
-local MAX_PET_LEVEL = 25
-
-local PET_EFFECTIVENESS_CHART = {
-	[1] = {4, 5},  -- Humanoid    +Undead      -Critter
-	[2] = {1, 3},  -- Dragon      +Humanoid    -Flying
-	[3] = {6, 8},  -- Flying      +Magical     -Beast
-	[4] = {5, 2},  -- Undead      +Critter     -Dragon
-	[5] = {8, 1},  -- Critter     +Beast       -Humanoid
-	[6] = {2, 9},  -- Magical     +Dragon      -Water
-	[7] = {9, 10}, -- Elemental   +Water       -Mechanical
-	[8] = {10, 1}, -- Beast       +Mechanical  -Humanoid
-	[9] = {3, 4},  -- Water       +Flying      -Undead
-	[10] = {7, 6}, -- Mechanical  +Elemental   -Magical
+-- load defaults or fallback to stored settings
+BattlePetTabsDB3 = type(BattlePetTabsDB3) == "table" and BattlePetTabsDB3 or {
+	Teams = {},
+	Groups = {},
+	Inactive = {},
 }
 
-local InCombatLockdown
-local InProcessingLockdown
-do
-	local _G_InCombatLockdown = _G.InCombatLockdown
-	local combat
+-- temporary variables until the dependency addon loads
+addon.PetJournalName = "Blizzard_Collections"
+addon.NumLoaded = 0
 
-	addon:HookScript("OnEvent", function(addon, event, ...)
-		if event == "PLAYER_REGEN_DISABLED" then
-			combat = 1
-		elseif event == "PLAYER_REGEN_ENABLED" then
-			combat = nil
+-- loads the UI once our addon and the pet journal have loaded
+function addon:ADDON_LOADED(event, name)
+	if name == addonName then
+		addon.NumLoaded = addon.NumLoaded + 1
+		-- the journal was loaded before our addon
+		if IsAddOnLoaded(addon.PetJournalName) then
+			addon.NumLoaded = addon.NumLoaded + 1
 		end
-	end)
-
-	function InCombatLockdown()
-		return _G_InCombatLockdown() or combat
+		-- check if Aurora is enabled
+		local _, _, _, enabled = GetAddOnInfo("Aurora")
+		addon.HasAurora = enabled
+	elseif name == addon.PetJournalName then
+		addon.NumLoaded = addon.NumLoaded + 1
+	end
+	if addon.NumLoaded >= 2 then
+		addon.PetJournalName, addon.NumLoaded = nil
+		addon:UnregisterEvent(event)
+		addon:CreateUI()
+		addon:RegisterEvent("BATTLE_PET_CURSOR_CLEAR")
+		addon:RegisterEvent("COMPANION_UPDATE")
+		addon:RegisterEvent("CURSOR_UPDATE")
+		addon:RegisterEvent("MOUNT_CURSOR_CLEAR")
+		addon:RegisterUnitEvent("UNIT_PET", "player")
+		addon:SetLoginLoadOut()
 	end
 end
 
-do
-	local isCoreLoaded, isJournalLoaded, isEventFound
+function addon:UPDATE()
+	-- enable or disable the new/moveTo button depending if we reached the limit or not
+	addon.Manager.flyout.new:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
+	addon.Manager.flyout.moveTo:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
 
-	addon:HookScript("OnEvent", function(addon, event, ...)
-		if event == "ADDON_LOADED" then
-			if ... == addonName then
-				isCoreLoaded = 1
-			elseif ... == petJournalAddonName then
-				isJournalLoaded = 1
-			end
-			if type(PetJournalParent) == "table" and type(PetJournalParent.GetObjectType) == "function" then
-				isJournalLoaded = 1 -- some addons load the PetJournal before PetBattleTabs can load - leaving it waiting for the PetJournal until the end of days - but no longer!
-			end
-		elseif event == "UPDATE_SUMMONPETS_ACTION" then
-			isEventFound = 1
-		end
-		if isCoreLoaded and isJournalLoaded and isEventFound then
-			isCoreLoaded, isJournalLoaded, isEventFound = nil
-			addon:UnregisterEvent("ADDON_LOADED")
-			addon:UnregisterEvent("UPDATE_SUMMONPETS_ACTION")
-			Initialize()
-		end
-	end)
-
-	addon:RegisterEvent("ADDON_LOADED")
-	addon:RegisterEvent("UPDATE_SUMMONPETS_ACTION")
-end
-
-local function GetStatIconString(i)
-	return "|TInterface\\PetBattles\\BattleBar-AbilityBadge-" .. (i and "Strong" or "Weak") .. ":18:18:0:-2|t" -- 18:18 looks good
-end
-
-local function GetPetIconString(i, s) -- needs more work, the dimensions get weird when the image is too big and it creates too much padding
-	return "|TInterface\\PetBattles\\PetIcon-" .. (type(i) == "string" and i or (type(i) == "number" and PET_TYPE_SUFFIX[i] or "NO_TYPE")) .. ":22:22:3:" .. (s and "2" or "4.25") .. ":128:256:62:128:102:168|t" -- 18:18 too small, 22:22 is better
-end
-
-local function BuildPetTooltipString(petId)
-	local speciesId, customName, level, xp, maxXp, displayID, isFavorite, petName, petIcon, petType, creatureID, sourceText, description, isWild, canBattle, tradable, unique = C_PetJournal_GetPetInfoByPetID(petId)
-	if not speciesId then
-		speciesId, petName, petIcon = 0, "Unknown", "Interface\\Icons\\INV_Misc_QuestionMark.blp"
-	elseif customName then
-		petName = customName
-	end
-	if level then
-		return GetPetIconString(select(3, C_PetJournal_GetPetInfoBySpeciesID(speciesId)), nil) .. "|T" .. petIcon .. ":18:18|t |cffCCCCCCL"..level.."|r " .. petName .. (maxXp > 0 and level < MAX_PET_LEVEL and " |cffCCCCCC("..math.floor(xp/maxXp*100).."% exp)|r" or "") -- 0:0 too small, 18:18 is better
-	end
-	return ""
-end
-
-local function BuildStrongWeakTooltip(petIds, isAttack, isWeak)
-	local speciesId, abilityId, petType
-	local modifier, matchStrong, matchWeak
-	local temp = {strong = {}, weak = {}, sKeys = {}, wKeys = {}}
-	for _, petData in pairs(petIds) do
-		local petId = petData[1]
-		speciesId = C_PetJournal_GetPetInfoByPetID(petId)
-		if speciesId then
-			abilityId = PET_BATTLE_PET_TYPE_PASSIVES[select(3, C_PetJournal_GetPetInfoBySpeciesID(speciesId))]
-			petType = select(7, C_PetBattles_GetAbilityInfoByID(abilityId))
-			if isAttack then
-				if petType then
-					for i = 1, C_PetJournal_GetNumPetTypes() do
-						modifier = C_PetBattles_GetAttackModifier(petType, i)
-						if modifier > 1 then
-							temp.strong[PET_TYPE_SUFFIX[i]] = GetPetIconString(i, 1)
-							table.insert(temp.sKeys, PET_TYPE_SUFFIX[i])
-						elseif modifier < 1 then
-							temp.weak[PET_TYPE_SUFFIX[i]] = GetPetIconString(i, 1)
-							table.insert(temp.wKeys, PET_TYPE_SUFFIX[i])
-						end
-					end
-				end
-			else
-				if petType then
-					matchStrong, matchWeak = unpack(PET_EFFECTIVENESS_CHART[petType] or {})
-					if matchStrong then
-						temp.strong[matchStrong] = GetPetIconString(matchStrong, 1)
-						table.insert(temp.sKeys, matchStrong)
-					end
-					if matchWeak then
-						temp.weak[matchWeak] = GetPetIconString(matchWeak, 1)
-						table.insert(temp.wKeys, matchWeak)
-					end
-				end
-			end
+	-- teams
+	for i, team in ipairs(addon.Teams) do
+		local dbTeam = BattlePetTabsDB3.Teams[i]
+		team.dbTeam = dbTeam
+		if dbTeam then
+			team.button:SetChecked(addon:IsTeamEquipped(dbTeam))
+			team.icon:SetTexture(addon:GetTeamTexture(dbTeam))
+			team:Show()
+		elseif not addon.IsDraggingInactiveTeam then
+			team.button:SetChecked(false)
+			team.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+			team:Hide()
 		end
 	end
-	local lookup = isWeak and temp.wKeys or temp.sKeys
-	local lookup2 = isWeak and temp.weak or temp.strong
-	table.sort(lookup)
-	local text = ""
-	for _, key in ipairs(lookup) do
-		text = text..lookup2[key]
-	end
-	return text:trim()
-end
 
-local function PetJournal_UpdateDisplay()
-	if type(PetJournal_UpdatePetLoadOut) == "function" then
-		PetJournal_UpdatePetLoadOut()
-	elseif type(PetJournal_UpdateAll) == "function" then
-		PetJournal_UpdateAll()
-	end
-end
-
-local function GetNumTeams()
-	local i = 0
-	if type(BattlePetTabsDB2) == "table" then
-		for _, object in pairs(BattlePetTabsDB2) do
-			if type(object) == "table" then
-				i = i + 1
-			end
-		end
-	end
-	return i
-end
-
-local function GetTeamId(teamId)
-	teamId = tonumber(teamId) or 0
-	if teamId < 1 then
-		teamId = tonumber(BattlePetTabsDB2.currentId) or 0
-	end
-	if teamId >= 1 then
-		return teamId
-	end
-	return 1 -- fallback
-end
-
-local function ValidatePetId(petId, petCheck, isValidating) -- WOD: isValidating?
-	if type(petId) == "string" and strlen(petId) >= strlen(EMPTY_PET) and select(2, petId:gsub(":", "")) >= 2 then -- the new WOD format is 24 characters and contains two separators
-		if petCheck then
-			return C_PetJournal_GetPetInfoByPetID(petId)
-		end
-		return 1
-	end
-end
-
-local function ValidateTeam(teamId, attemptFix)
-	teamId = GetTeamId(teamId)
-	if type(BattlePetTabsDB2[teamId]) == "table" then
-		local team = BattlePetTabsDB2[teamId]
-		if type(team.name) ~= "string" then
-			return
-		end
-		if type(team.setup) ~= "table" then
-			if attemptFix then
-				team.setup = {}
-			else
-				return
-			end
-		end
-		for index = 1, MAX_ACTIVE_PETS do
-			local petData = team.setup[index]
-			if type(petData) ~= "table" then
-				if attemptFix then
-					team.setup[index] = {EMPTY_PET, 0, 0, 0}
-					petData = team.setup[index]
-				else
-					return
-				end
-			end
-			local petId, ab1, ab2, ab3 = petData[1], petData[2], petData[3], petData[4]
-			if not ValidatePetId(petId, 1, 1) then
-				if attemptFix then
-					team.setup[index] = {EMPTY_PET, 0, 0, 0}
-				else
-					return
-				end
-			end
-		end
-		if type(team.icon) ~= "string" then
-			team.icon = "Interface\\Icons\\INV_Misc_QuestionMark.blp"
-		end
-		BattlePetTabsDB2[teamId] = team
-		return team
-	end
-end
-
-local function ApplyRename(teamId, newName)
-	teamId = GetTeamId(teamId)
-	if teamId <= numTabs and type(newName) == "string" and strlen(newName) > 0 then
-		BattlePetTabsDB2[teamId].name = newName
-		GameTooltip:Hide()
-		Update()
-	end
-end
-
-local function ApplyDelete(teamId)
-	teamId = GetTeamId(teamId)
-	if teamId <= numTabs then
-		table.wipe(BattlePetTabsDB2[teamId])
-		if teamId - 1 >= 1 then
-			BattlePetTabsDB2.currentId = teamId - 1
-		elseif BattlePetTabsDB2.currentId > 1 then
-			BattlePetTabsDB2.currentId = BattlePetTabsDB2.currentId - 1
+	-- inactive teams
+	for i, team in ipairs(addon.InactiveTeams) do
+		local dbTeam = BattlePetTabsDB3.Inactive[i]
+		team.dbTeam = dbTeam
+		if dbTeam then
+			team.icon:SetTexture(addon:GetTeamTexture(dbTeam))
+			team:Show()
 		else
-			BattlePetTabsDB2.currentId = 1
+			team.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+			team:Hide()
 		end
-		GameTooltip:Hide()
-		LoadTeam()
-		Update()
 	end
-end
 
-local function GetTeamMacroName(teamId)
-	teamId = GetTeamId(teamId)
-	if teamId then
-		return "BattlePetTeam" .. teamId
-	end
-end
-
-local function CreateTeamMacro(macroName, teamId, teamData)
-	teamId = GetTeamId(teamId)
-	if type(macroName) ~= "string" then
-		return
-	end
-	if type(teamId) ~= "number" then
-		return
-	end
-	if type(teamData) ~= "table" then
-		return
-	end
-	if InCombatLockdown() then
-		return -- can't work with macros in combat
-	end
-	if GetNumMacros() >= MAX_ACCOUNT_MACROS then
-		return print("Can't create macro for team #" .. teamId .. " because you don't have any more available macro slots in your General category.")
-	end
-	if MacroFrame then
-		HideUIPanel(MacroFrame)
-	end
-	local iconFile = teamData.icon:lower():gsub(".-\\.-\\(.-)%.blp", "%1") -- need only the filename, the API is strict and doesn't anyway let you define paths outside the Interface\Icons folder
-	local macroBody = "#showtooltip\n/run PetJournal_LoadUI()if\"RightButton\"==GetMouseButtonClicked()then TogglePetJournal(2)else local i,b=tonumber(" .. (teamId or 0) .. ")b=_G[\"" .. frameName .. "Tab\"..i..\"Button\"]if b then if not b.newTeam then b:Click()end else print\"" .. frameName .. " not loaded!\"end end"
-	if GetMacroIndexByName(macroName) == 0 then
-		CreateMacro(macroName, 0, macroBody, nil)
-	end
-	return EditMacro(GetMacroIndexByName(macroName), macroName, iconFile, macroBody)
-end
-
-local function IntegrityCheck()
-	local temp = {}
-	for index, team in ipairs(BattlePetTabsDB2) do
-		team = ValidateTeam(index, 1)
-		if team then
-			table.insert(temp, team)
+	-- dragging a team
+	if addon.IsDraggingTeam then
+		if not addon.Manager.flyout:IsShown() then
+			addon.Manager.button:Click()
 		end
-	end
-	temp.currentId = BattlePetTabsDB2.currentId
-	BattlePetTabsDB2 = temp
-	if not InCombatLockdown() then
-		local lastId = #temp
-		if lastId == 0 then
-			for i = 1, numTabs do
-				if ValidateTeam(i, 1) then
-					lastId = lastId + 1
-				else
-					lastId = lastId - 1
-				end
-			end
-		end
-		local canDelete = 1
-		if type(BattlePetTabsSnapshotDB.db) == "table" then
-			for _, snapshot in pairs(BattlePetTabsSnapshotDB.db) do
-				if type(snapshot) == "table" and type(snapshot.db) == "table" then
-					local numTeams = 0
-					for _, team in pairs(snapshot.db) do
-						if type(team) == "table" then
-							numTeams = numTeams + 1
-						end
-					end
-					if numTeams > lastId then
-						canDelete = nil
-						break
-					end
-				end
-			end
-		end
-		for i = 1, numTabs do
-			local macroName = GetTeamMacroName(i)
-			if macroName then
-				if lastId > 0 and i <= lastId then
-					local macroIndex = GetMacroIndexByName(macroName)
-					if macroIndex > 0 then
-						CreateTeamMacro(macroName, i, BattlePetTabsDB2[i])
-					end
-				elseif canDelete then
-					DeleteMacro(macroName)
-				end
-			end
-		end
-	end
-end
-
-local function UpdateCurrentTeam(teamId)
-	teamId = GetTeamId(teamId)
-	if type(BattlePetTabsDB2[teamId]) ~= "table" then
-		BattlePetTabsDB2[teamId] = {}
-	end
-	local team = BattlePetTabsDB2[teamId]
-	if type(team.name) ~= "string" then
-		team.name = "Team " .. teamId
-	end
-	if type(team.setup) ~= "table" then
-		team.setup = {}
-	end
-	table.wipe(team.setup)
-	for i = 1, MAX_ACTIVE_PETS do
-		local petId, ab1, ab2, ab3, locked = C_PetJournal_GetPetLoadOutInfo(i)
-		if petId then
-			table.insert(team.setup, {petId, ab1, ab2, ab3})
-		end
-	end
-	for i = MAX_ACTIVE_PETS - #team.setup, 1, -1 do
-		table.insert(team.setup, {EMPTY_PET, 0, 0, 0})
-	end
-	team.icon = nil
-	for _, petData in ipairs(team.setup) do
-		if not team.icon then
-			team.icon = select(9, C_PetJournal_GetPetInfoByPetID(petData[1]))
-		else
-			break
-		end
-	end
-	if not team.icon then
-		team.icon = "Interface\\Icons\\INV_Misc_QuestionMark.blp"
-	end
-	Update()
-end
-
-local function UpdateTeamLoadOut(slotId, petId, skipUpdating, ...)
-	if skipUpdating ~= addonName then
-		UpdateCurrentTeam()
-	end
-end
-
-local function UpdateTeamLoadOutAbilities(slotId, abilitySlot, abilityId, skipUpdating, ...)
-	if skipUpdating ~= addonName then
-		UpdateCurrentTeam()
-	end
-end
-
-function LoadTeam(teamId) -- local
-	teamId = GetTeamId(teamId)
-	if type(BattlePetTabsDB2[teamId]) ~= "table" or type(BattlePetTabsDB2[teamId].setup) ~= "table" or not ValidateTeam(teamId, 1) then
-		return
-	end
-	local team = BattlePetTabsDB2[teamId]
-	local pets, count, emptyCount, unhook, loadoutId, _, locked = {}, 0, 0
-	for i = 1, MAX_ACTIVE_PETS do
-		local petData = team.setup[i]
-		if type(petData) == "table" then
-			local petId, ab1, ab2, ab3 = petData[1], petData[2], petData[3], petData[4]
-			loadoutId, _, _, _, locked = C_PetJournal_GetPetLoadOutInfo(i)
-			if petId == loadoutId or (not loadoutId and (petId == "" or petId == EMPTY_PET)) or locked then
-				count = count + 1
-				if not loadoutId or locked then
-					emptyCount = emptyCount + 1
-				end
-			elseif ValidatePetId(petId, 1) then
-				C_PetJournal_SetPetLoadOutInfo(i, petId, addonName)
-			else
-				C_PetJournal_SetPetLoadOutInfo(i, EMPTY_PET, addonName)
-			end
-			table.insert(pets, {petId, ab1, ab2, ab3})
-		end
-	end
-	if count == MAX_ACTIVE_PETS then
-		unhook = 1
-		count = 0
-		for i, petData in ipairs(pets) do
-			local petId = petData[1]
-			if petId == "" or petId == EMPTY_PET then
-				count = count + MAX_ACTIVE_ABILITIES
-			else
-				for j = 1, MAX_ACTIVE_ABILITIES do
-					if petData[1 + j] == 0 or petData[1 + j] == select(1 + j, C_PetJournal_GetPetLoadOutInfo(i)) then
-						count = count + 1
-					else
-						C_PetJournal_SetAbility(i, j, petData[1 + j], addonName)
-					end
-				end
-			end
-		end
-		if count ~= MAX_ACTIVE_PETS * MAX_ACTIVE_ABILITIES then
-			unhook = nil
-		end
-		if unhook then
-			InProcessingLockdown = nil
-			watcher:SetScript("OnUpdate", nil)
-			elapsed = 0
-			PetJournal_UpdateDisplay()
-		else
-			InProcessingLockdown = 1
-			watcher:SetScript("OnUpdate", Watcher_OnUpdate)
-		end
+		addon.Manager.flyout.new:Hide()
+		addon.Manager.flyout.moveTo:Show()
 	else
-		InProcessingLockdown = 1
-		watcher:SetScript("OnUpdate", Watcher_OnUpdate)
+		addon.Manager.flyout.new:Show()
+		addon.Manager.flyout.moveTo:Hide()
 	end
-	Update()
-end
 
-function Watcher_OnUpdate(watcher, elapse) -- local
-	elapsed = elapsed + elapse
-	if elapsed > .1 then
-		elapsed = 0
-		LoadTeam()
-	end
-end
-
-local function onGameTooltipShow(self)
-	local text, tabButton = _G[self:GetName() .. "TextLeft1"]:GetText()
-	for i = 1, numTabs do
-		if text and text == GetTeamMacroName(i) then
-			tabButton = _G[frameName .. "Tab" .. i .. "Button"]
-			if tabButton and tabButton.tooltip and not tabButton.newTeam and tabButton:IsVisible() then
-				self:ClearLines()
-				if type(tabButton.tooltip) == "table" then
-					for _, line in ipairs(tabButton.tooltip) do
-						self:AddLine(line)
-					end
-				else
-					self:AddLine(tabButton.tooltip)
-				end
-				self:AddLine("|cff999999Right-click to open the Pet Journal|r")
-				self:Show()
-			end
-			break
-		end
-	end
-end
-
-local function UpdateLock()
-	local lockdown = InProcessingLockdown or not C_PetJournal_IsJournalUnlocked() or C_PetBattles_GetPVPMatchmakingInfo() or C_PetBattles_IsInBattle() or InCombatLockdown() -- reason for InCombatLockdown is to prevent managing pets and calling combat protected functions and throwing errors everywhere
-	local tabButton, tabTexture
-	tabButton = _G[frameName .. "TabManagerButton"]
-	tabTexture = _G[frameName .. "TabManagerButtonIconTexture"]
-	if lockdown then
-		tabButton:Disable()
-		tabTexture:SetDesaturated(true)
-		if InProcessingLockdown then
-			tabButton.tooltip2 = "Please wait..."
-		else
-			tabButton.tooltip2 = {"|cffFFFFFFLocked|r", "You are either queued for a match\nor caught up in a pet battle."}
-		end
-		BattlePetTabFlyoutFrame:Hide()
-	else
-		tabButton:Enable()
-		tabTexture:SetDesaturated(false)
-		tabButton.tooltip2 = nil
-	end
-	for i = 1, numTabs do
-		tabButton = _G[frameName .. "Tab" .. i .. "Button"]
-		if tabButton:IsVisible() then
-			tabTexture = _G[frameName .. "Tab" .. i .. "ButtonIconTexture"]
-			if lockdown then
-				tabButton:Disable()
-				tabTexture:SetDesaturated(true)
-				if InProcessingLockdown then
-					tabButton.tooltip2 = "Please wait..."
-				else
-					tabButton.tooltip2 = {"|cffFFFFFFLocked|r", "You are either queued for a match\nor caught up in a pet battle."}
-				end
-			else
-				tabButton:Enable()
-				tabTexture:SetDesaturated(false)
-				tabButton.tooltip2 = nil
+	-- dragging an inactive team
+	if addon.IsDraggingInactiveTeam then
+		for i, team in ipairs(addon.Teams) do
+			if not team.dbTeam then
+				team.icon:SetTexture("Interface\\Icons\\Misc_ArrowLeft")
+				team:Show()
+				break
 			end
 		end
 	end
 end
 
-function Update() -- local
-	-- IntegrityCheck() -- disabled for the moment
-	local shownNewTeam
-	for i = 1, numTabs do
-		local team = BattlePetTabsDB2[i] or {}
-		local tab = _G[frameName .. "Tab" .. i]
-		local tabButton = _G[frameName .. "Tab" .. i .. "Button"]
-		if shownNewTeam then
-			tab:Hide()
-			tabButton:SetEnabled(false)
-		else
-			local tabTexture = _G[frameName .. "Tab" .. i .. "ButtonIconTexture"]
-			if type(team.setup) ~= "table" then
-				tabTexture:SetTexture("Interface\\GuildBankFrame\\UI-GuildBankFrame-NewTab")
-				tabButton.tooltip = "New Team"
-				tabButton.newTeam = 1
-				shownNewTeam = 1
-			else
-				tabTexture:SetTexture(team.icon)
-				tabButton.tooltip = {}
-				table.insert(tabButton.tooltip, team.name)
-				tabButton.newTeam = nil
-				for _, petData in ipairs(team.setup) do
-					table.insert(tabButton.tooltip, BuildPetTooltipString(petData[1]))
-				end
-				table.insert(tabButton.tooltip, "Atk." .. GetStatIconString(1) .. "vs " .. BuildStrongWeakTooltip(team.setup, 1))
-				table.insert(tabButton.tooltip, "Atk." .. GetStatIconString() .. "vs " .. BuildStrongWeakTooltip(team.setup, 1, 1))
-				table.insert(tabButton.tooltip, "Def." .. GetStatIconString(1) .. "vs " .. BuildStrongWeakTooltip(team.setup, nil, 1))
-				table.insert(tabButton.tooltip, "Def." .. GetStatIconString() .. "vs " .. BuildStrongWeakTooltip(team.setup))
-			end
-			if not tabButton.newTeam and i == GetTeamId() then
-				tabButton:SetChecked(1)
-			else
-				tabButton:SetChecked(nil)
-			end
-			tab:Show()
-			tabButton:SetEnabled(true)
-		end
-	end
-	UpdateLock()
-	local focus = GetMouseFocus() -- the tooltip stays the same when we add or remove teams, so this helps update that tooltip automatically by checking what we are currently hovering over and triggering the mechanism is appropriate
-	if type(focus) == "table" and type(focus.GetObjectType) == "function" and (focus:GetObjectType() == "Button" or focus:GetObjectType() == "CheckButton") and type(focus.GetScript) == "function" then
-		(focus:GetScript("OnEnter") or function() end)(focus)
-	end
-	PetJournal_UpdateDisplay()
-	if BattlePetTabFlyoutFrame:IsVisible() then
-		BattlePetTabFlyoutPopupFrame.skipHide = 1
-		BattlePetTabFlyoutFrame:Hide()
-		BattlePetTabFlyoutFrame:Show()
-	end
-end
+-- additional events that trigger updates
+addon.BATTLE_PET_CURSOR_CLEAR = addon.UPDATE
+addon.COMPANION_UPDATE = addon.UPDATE
+addon.CURSOR_UPDATE = addon.UPDATE
+addon.MOUNT_CURSOR_CLEAR = addon.UPDATE
+addon.UNIT_PET = addon.UPDATE
 
-function BattlePetTab_OnClick(self, button, currentId)
-	if button == "LeftButton" then
-		StaticPopup_Hide("BATTLETABS_TEAM_RENAME")
-		StaticPopup_Hide("BATTLETABS_TEAM_DELETE")
-	end
-	if not self.newTeam or button == "LeftButton" then
-		BattlePetTabsDB2.currentId = currentId
-		if button == "LeftButton" then
-			if self.newTeam then
-				UpdateCurrentTeam()
-			end
-			LoadTeam()
-		elseif button == "RightButton" and not self.newTeam then
-			LoadTeam()
-			if IsModifiedClick() then
-				StaticPopup_Show("BATTLETABS_TEAM_RENAME", BattlePetTabsDB2[currentId].name, nil, currentId)
-			else
-				StaticPopup_Show("BATTLETABS_TEAM_DELETE", BattlePetTabsDB2[currentId].name, nil, currentId)
-			end
-		end
-	end
-	Update()
-end
+-- create the addon UI
+function addon:CreateUI()
+	-- setup the container
+	addon.Container = CreateFrame("Frame", addonName .. "Frame", PetJournal)
+	addon.Container:SetParent(PetJournal)
+	addon.Container:SetSize(42, 50)
+	addon.Container:SetPoint("TOPLEFT", "$parent", "TOPRIGHT", addon.HasAurora and 3 or -1, MAX_BATTLE_TABS > 8 and 24 or -17)
+	addon.Container:SetScript("OnShow", addon.Widget.Container.OnShow)
 
-function BattlePetTab_OnDrag(self, button, currentId)
-	if not InCombatLockdown() and not self.newTeam then
-		local macroName = GetTeamMacroName(currentId)
-		if macroName then
-			local macroId = CreateTeamMacro(macroName, currentId, BattlePetTabsDB2[currentId])
-			if macroId then
-				ClearCursor()
-				PickupMacro(macroId)
-			end
-		end
-	end
-end
+	-- setup the manager button
+	addon.Manager = addon:CreatePetButton(0)
+	addon.Manager:SetParent(addon.Container)
+	addon.Manager:SetPoint("TOPLEFT", "$parent", "BOTTOMLEFT")
+	addon.Manager.icon:SetTexture("Interface\\Icons\\INV_Pet_Achievement_CaptureAWildPet")
+	addon.Manager.button:SetScript("OnClick", addon.Widget.Manager.OnClick)
+	addon.Manager.button:SetScript("OnEnter", addon.Widget.Manager.OnEnter)
+	addon.Manager.button:SetScript("OnLeave", addon.Widget.Manager.OnLeave)
+	addon.Manager.button:SetScript("OnDragStart", nil)
+	addon.Manager.button:SetScript("OnDragStop", nil)
+	addon.Manager.button:SetScript("OnReceiveDrag", nil)
 
-local BATTLEPETTABSFLYOUT_ITEM_HEIGHT = 37
-local BATTLEPETTABSFLYOUT_ITEM_WIDTH = 37
-local BATTLEPETTABSFLYOUT_ITEM_XOFFSET = 4
-local BATTLEPETTABSFLYOUT_ITEM_YOFFSET = -5
+	-- setup the manager flyout
+	addon.Manager.flyout = addon:CreateFlyout(addon.Manager)
 
-local BATTLEPETTABSFLYOUT_BORDERWIDTH = 3
-local BATTLEPETTABSFLYOUT_HEIGHT = 43
-local BATTLEPETTABSFLYOUT_WIDTH = 43
+	-- add new team button
+	addon.Manager.flyout.new = addon.Manager.flyout:CreateButton(FLYOUT_COMMAND_NEW)
 
-local BATTLEPETTABSFLYOUT_ITEMS_PER_ROW = 5
-local BATTLEPETTABSFLYOUT_MAXITEMS = 50
+	-- add move to team button
+	addon.Manager.flyout.moveTo = addon.Manager.flyout:CreateButton(FLYOUT_COMMAND_MOVETO)
+	addon.Manager.flyout.moveTo:ClearAllPoints()
+	addon.Manager.flyout.moveTo:SetAllPoints(addon.Manager.flyout.new)
 
-local BATTLEPETTABSFLYOUT_ONESLOT_LEFT_COORDS = {0, 0.09765625, 0.5546875, 0.77734375}
-local BATTLEPETTABSFLYOUT_ONESLOT_RIGHT_COORDS = {0.41796875, 0.51171875, 0.5546875, 0.77734375}
-local BATTLEPETTABSFLYOUT_ONESLOT_LEFTWIDTH = 25
-local BATTLEPETTABSFLYOUT_ONESLOT_RIGHTWIDTH = 24
-
-local BATTLEPETTABSFLYOUT_ONEROW_LEFT_COORDS = {0, 0.16796875, 0.5546875, 0.77734375}
-local BATTLEPETTABSFLYOUT_ONEROW_CENTER_COORDS = {0.16796875, 0.328125, 0.5546875, 0.77734375}
-local BATTLEPETTABSFLYOUT_ONEROW_RIGHT_COORDS = {0.328125, 0.51171875, 0.5546875, 0.77734375}
-local BATTLEPETTABSFLYOUT_ONEROW_LEFT_WIDTH = 43
-local BATTLEPETTABSFLYOUT_ONEROW_CENTER_WIDTH = 41
-local BATTLEPETTABSFLYOUT_ONEROW_RIGHT_WIDTH = 47
-local BATTLEPETTABSFLYOUT_ONEROW_HEIGHT = 54
-
-local BATTLEPETTABSFLYOUT_MULTIROW_TOP_COORDS = {0, 0.8359375, 0, 0.19140625}
-local BATTLEPETTABSFLYOUT_MULTIROW_MIDDLE_COORDS = {0, 0.8359375, 0.19140625, 0.35546875}
-local BATTLEPETTABSFLYOUT_MULTIROW_BOTTOM_COORDS = {0, 0.8359375, 0.35546875, 0.546875}
-local BATTLEPETTABSFLYOUT_MULTIROW_TOP_HEIGHT = 49
-local BATTLEPETTABSFLYOUT_MULTIROW_MIDDLE_HEIGHT = 42
-local BATTLEPETTABSFLYOUT_MULTIROW_BOTTOM_HEIGHT = 49
-local BATTLEPETTABSFLYOUT_MULTIROW_WIDTH = 214
-
-local table_clone
-function table_clone(t) -- local
-	if type(t) == "table" then
-		local c = {}
-		for k, v in pairs(t) do
-			c[k] = table_clone(v)
-		end
-		return c
-	end
-	return t
-end
-
-local function CreateSnapshot()
-	local clone = table_clone(BattlePetTabsDB2)
-	local cloneIcon = type(clone) == "table" and type(clone[1]) == "table" and clone[1].icon
-	local newIndex = #BattlePetTabsSnapshotDB.db + 1
-	table.insert(BattlePetTabsSnapshotDB.db, {
-		index = newIndex,
-		created = time(),
-		name = "Snapshot " .. newIndex,
-		icon = cloneIcon or "Interface\\Icons\\INV_Misc_QuestionMark.blp",
-		db = clone,
-	})
-	BattlePetTabsSnapshotDB.currentId = newIndex
-end
-
-local function GetSnapshotIndex(index)
-	index = tonumber(index) or 0
-	index = index > 0 and index <= #BattlePetTabsSnapshotDB.db and index or 0
-	return index
-end
-
-local function LoadSnapshot(index)
-	index = GetSnapshotIndex(index)
-	if index > 0 then
-		local snapshot = BattlePetTabsSnapshotDB.db[index]
-		local clone = table_clone(snapshot.db)
-		table.wipe(BattlePetTabsDB2)
-		BattlePetTabsDB2 = clone
-		BattlePetTabsSnapshotDB.currentId = index
-	end
-end
-
-local function ApplySnapshotRename(index, newName) -- deprecated/obscolete
-	index = GetSnapshotIndex(index)
-	if index > 0 and type(newName) == "string" and strlen(newName) > 0 then
-		BattlePetTabsSnapshotDB.db[index].name = newName
-		if BattlePetTabFlyoutFrame:IsVisible() then
-			--BattlePetTabFlyoutPopupFrame.skipHide = 1
-			BattlePetTabFlyoutFrame:Hide()
-			BattlePetTabFlyoutFrame:Show()
-		end
-	end
-end
-
-local function ApplySnapshotDelete(index)
-	index = GetSnapshotIndex(index)
-	if index > 0 then
-		local temp = {}
-		for k, v in pairs(BattlePetTabsSnapshotDB.db) do
-			if k ~= index then
-				table.insert(temp, v)
-			end
-		end
-		table.wipe(BattlePetTabsSnapshotDB.db)
-		BattlePetTabsSnapshotDB.db = temp
-		if not BattlePetTabsSnapshotDB.db[index] then
-			BattlePetTabsSnapshotDB.currentId = BattlePetTabsSnapshotDB.currentId - 1
-			if BattlePetTabsSnapshotDB.currentId < 1 then
-				BattlePetTabsSnapshotDB.currentId = 1
-			end
-		end
-		if BattlePetTabFlyoutFrame:IsVisible() then
-			--BattlePetTabFlyoutPopupFrame.skipHide = 1
-			BattlePetTabFlyoutFrame:Hide()
-			BattlePetTabFlyoutFrame:Show()
-		end
-	end
-end
-
-local function SnapshotIntegrityCheck()
-	if type(BattlePetTabsSnapshotDB) ~= "table" then
-		BattlePetTabsSnapshotDB = {}
-	end
-	if type(BattlePetTabsSnapshotDB.db) ~= "table" then
-		BattlePetTabsSnapshotDB.db = {}
-	end
-	if type(BattlePetTabsSnapshotDB.currentId) ~= "number" then
-		BattlePetTabsSnapshotDB.currentId = 1
-	end
-end
-
-local function BattlePetTabFlyout_DisplayButton(button, managerButton, snapshot)
-	button.snapshot = snapshot
-	snapshot = snapshot or {}
-	button.newSnapshot = snapshot.newSnapshot
-	button.tooltip = snapshot.name
-	SetItemButtonTexture(button, snapshot.icon)
-	SetItemButtonCount(button, 0)
-	local locked = button.newSnapshot and GetNumTeams() < 1
-	if locked then
-		--SetItemButtonTextureVertexColor(button, .9, 0, 0)
-		--SetItemButtonNormalTextureVertexColor(button, .9, 0, 0)
-		button:SetEnabled(false)
-		button.icon:SetDesaturated(true)
-	else
-		--SetItemButtonTextureVertexColor(button, 1, 1, 1)
-		--SetItemButtonNormalTextureVertexColor(button, 1, 1, 1)
-		button:SetEnabled(true)
-		button.icon:SetDesaturated(false)
-	end
-	--if not button.newSnapshot and BattlePetTabsSnapshotDB.currentId == button:GetID() then
-	--	button:LockHighlight()
-	--else
-	--	button:UnlockHighlight()
-	--end
-	button.UpdateTooltip = function(self)
-		--GameTooltip:SetOwner(BattlePetTabFlyoutFrame.buttonFrame, "ANCHOR_RIGHT", 6, -BattlePetTabFlyoutFrame.buttonFrame:GetHeight() - 6)
-		if self.tooltip or self.tooltip2 then
-			GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-			GameTooltip:ClearLines()
-			if type(self.tooltip2 or self.tooltip) == "table" then
-				for _, line in ipairs(self.tooltip2 or self.tooltip) do
-					GameTooltip:AddLine(line)
-				end
-			else
-				GameTooltip:AddLine(self.tooltip2 or self.tooltip)
-			end
-			if not self.tooltip2 and not self.newSnapshot then
-				GameTooltip:AddLine("|cff999999Right-click to delete.|r")
-				GameTooltip:AddLine("|cff999999Right-click with modifier to edit.|r")
-			end
-			GameTooltip:Show()
-		end
-	end
-	if button:IsMouseOver() then
-		button:UpdateTooltip()
-	end
-end
-
-function BattlePetTabFlyout_CreateButton()
-	local buttons = BattlePetTabFlyoutFrame.buttons
-	local buttonAnchor = BattlePetTabFlyoutFrame.buttonFrame
-	local numButtons = #buttons
-	local button = CreateFrame("Button", "BattlePetTabFlyoutFrameButton" .. numButtons + 1, buttonAnchor, "BattlePetTabFlyoutButtonTemplate")
-	local pos = numButtons/BATTLEPETTABSFLYOUT_ITEMS_PER_ROW
-	if pos == math.floor(pos) then
-		button:SetPoint("TOPLEFT", buttonAnchor, "TOPLEFT", BATTLEPETTABSFLYOUT_BORDERWIDTH, -BATTLEPETTABSFLYOUT_BORDERWIDTH - (BATTLEPETTABSFLYOUT_ITEM_HEIGHT - BATTLEPETTABSFLYOUT_ITEM_YOFFSET)*pos)
-	else
-		button:SetPoint("TOPLEFT", buttons[numButtons], "TOPRIGHT", BATTLEPETTABSFLYOUT_ITEM_XOFFSET, 0);
-	end
-	table.insert(buttons, button)
-	return button
-end
-
-function BattlePetTabFlyout_CreateBackground(buttonAnchor)
-	local numBGs = buttonAnchor.numBGs
-	numBGs = numBGs + 1
-	local texture = buttonAnchor:CreateTexture(nil, nil, "BattlePetTabFlyoutTexture")
-	buttonAnchor["bg" .. numBGs] = texture
-	buttonAnchor.numBGs = numBGs
-	return texture
-end
-
-function BattlePetTabFlyout_OnClick(button, mouseButton)
-	local snapshot = button.snapshot
-	if not snapshot then
-		return
-	end
-	if mouseButton == "LeftButton" then
-		if snapshot.newSnapshot then
-			CreateSnapshot()
-			BattlePetTabFlyoutFrame:Show() -- make sure it stays open after the click
-		else
-			LoadSnapshot(button:GetID())
-			LoadTeam() -- refresh the loadout team
-		end
-		if BattlePetTabFlyoutFrame:IsVisible() then
-			BattlePetTabFlyoutPopupFrame.skipHide = 1
-			BattlePetTabFlyoutFrame:Hide()
-			BattlePetTabFlyoutFrame:Show()
-		end
-	elseif mouseButton == "RightButton" and not snapshot.newSnapshot then
-		if IsModifiedClick() then
-			BattlePetTabFlyoutPopupFrame:Hide()
-			BattlePetTabFlyoutPopupFrame.button = button
-			BattlePetTabFlyoutPopupFrame:Show()
-		else
-			StaticPopup_Show("BATTLETABS_SNAPSHOT_DELETE", snapshot.name, nil, button:GetID())
-		end
-	end
-	Update()
-end
-
-function BattlePetTabFlyout_OnShow(self)
-	SnapshotIntegrityCheck()
-	self:SetScale(.935) -- weaked scale for uniform button size
-
-	local managerButton = self.managerButton
-	local buttons = self.buttons
-	local buttonAnchor = self.buttonFrame
-
-	table.wipe(self.snapshots)
-	for i, snapshot in ipairs(BattlePetTabsSnapshotDB.db) do
-		table.insert(self.snapshots, snapshot)
-	end
-	table.sort(self.snapshots, function(a, b) return a.created < b.created end)
-
-	local numSnapshots = #self.snapshots
-	for i = BATTLEPETTABSFLYOUT_MAXITEMS + 1, numSnapshots do
-		self.snapshots[i] = nil
-	end
-	table.insert(self.snapshots, {
-		created = time() + 1,
-		name = "New Snapshot",
-		icon = "Interface\\GuildBankFrame\\UI-GuildBankFrame-NewTab.blp",
-		newSnapshot = 1,
-	})
-	numSnapshots = math.min(#self.snapshots, BATTLEPETTABSFLYOUT_MAXITEMS)
-
-	while #buttons < numSnapshots do
-		BattlePetTabFlyout_CreateButton()
+	-- add padding
+	for i = 1, BATTLEPETTABSFLYOUT_ITEMS_PER_ROW - 2 do
+		addon.Manager.flyout:CreateButton():Hide()
 	end
 
-	if numSnapshots == 0 then
-		self:Hide()
-		return
+	-- add inactive teams
+	addon.InactiveTeams = {}
+	for i = 1, BATTLEPETTABSFLYOUT_MAX_ITEMS do
+		local team = addon.Manager.flyout:CreateButton(FLYOUT_COMMAND_TEAM)
+		team:SetID(i)
+		table.insert(addon.InactiveTeams, team)
 	end
 
-	for i, button in ipairs(buttons) do
-		if i <= numSnapshots then
-			button:SetID(i)
-			BattlePetTabFlyout_DisplayButton(button, managerButton, self.snapshots[i])
-			button:Show()
-		else
-			button:Hide()
-		end
+	-- create team buttons
+	addon.Teams = {}
+	for i = 1, MAX_BATTLE_TABS do
+		local team = addon:CreatePetButton(i)
+		team:SetID(i)
+		team:SetParent(addon.Container)
+		team:SetPoint("TOPLEFT", addon.Teams[#addon.Teams] or addon.Manager, "BOTTOMLEFT")
+		team.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+
+		-- setup the team flyout
+		team.flyout = addon:CreateFlyout(team)
+
+		-- create team flyout buttons
+		team.flyout.rename = team.flyout:CreateButton(FLYOUT_COMMAND_RENAME)
+		team.flyout.delete = team.flyout:CreateButton(FLYOUT_COMMAND_DELETE)
+
+		table.insert(addon.Teams, team)
 	end
 
-	self:SetParent(BattlePetTabsTabManager)
-	self:SetFrameStrata("HIGH")
-	self:ClearAllPoints()
-	self:SetFrameLevel(managerButton:GetFrameLevel() - 1)
-	self:SetPoint("TOPLEFT", managerButton, "TOPLEFT", -BATTLEPETTABSFLYOUT_BORDERWIDTH, BATTLEPETTABSFLYOUT_BORDERWIDTH)
-
-	local horizontalItems = math.min(numSnapshots, BATTLEPETTABSFLYOUT_ITEMS_PER_ROW)
-	local relativeAnchor = managerButton and managerButton.popoutButton or managerButton
-	buttonAnchor:SetPoint("TOPLEFT", relativeAnchor, "TOPRIGHT", 12, 2)
-	buttonAnchor:SetWidth((horizontalItems * BATTLEPETTABSFLYOUT_ITEM_WIDTH) + ((horizontalItems - 1) * BATTLEPETTABSFLYOUT_ITEM_XOFFSET) + BATTLEPETTABSFLYOUT_BORDERWIDTH)
-	buttonAnchor:SetHeight(BATTLEPETTABSFLYOUT_HEIGHT + (math.floor((numSnapshots - 1)/BATTLEPETTABSFLYOUT_ITEMS_PER_ROW) * (BATTLEPETTABSFLYOUT_ITEM_HEIGHT - BATTLEPETTABSFLYOUT_ITEM_YOFFSET)))
-
-	if self.numSnapshots ~= numSnapshots then
-		local texturesUsed = 0
-		if numSnapshots == 1 then
-			local bgTex, lastBGTex
-			bgTex = buttonAnchor.bg1
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_ONESLOT_LEFT_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_ONESLOT_LEFTWIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_ONEROW_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", -5, 4)
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-			lastBGTex = bgTex
-
-			bgTex = buttonAnchor.bg2 or BattlePetTabFlyout_CreateBackground(buttonAnchor)
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_ONESLOT_RIGHT_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_ONESLOT_RIGHTWIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_ONEROW_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", lastBGTex, "TOPRIGHT")
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-			lastBGTex = bgTex
-
-		elseif numSnapshots <= BATTLEPETTABSFLYOUT_ITEMS_PER_ROW then
-			local bgTex, lastBGTex
-			bgTex = buttonAnchor.bg1
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_ONEROW_LEFT_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_ONEROW_LEFT_WIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_ONEROW_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", -5, 4)
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-			lastBGTex = bgTex
-			for i = texturesUsed + 1, numSnapshots - 1 do
-				bgTex = buttonAnchor["bg"..i] or BattlePetTabFlyout_CreateBackground(buttonAnchor)
-				bgTex:ClearAllPoints()
-				bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_ONEROW_CENTER_COORDS))
-				bgTex:SetWidth(BATTLEPETTABSFLYOUT_ONEROW_CENTER_WIDTH)
-				bgTex:SetHeight(BATTLEPETTABSFLYOUT_ONEROW_HEIGHT)
-				bgTex:SetPoint("TOPLEFT", lastBGTex, "TOPRIGHT")
-				bgTex:Show()
-				texturesUsed = texturesUsed + 1
-				lastBGTex = bgTex
-			end
-
-			bgTex = buttonAnchor["bg"..numSnapshots] or BattlePetTabFlyout_CreateBackground(buttonAnchor)
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_ONEROW_RIGHT_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_ONEROW_RIGHT_WIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_ONEROW_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", lastBGTex, "TOPRIGHT")
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-
-		elseif numSnapshots > BATTLEPETTABSFLYOUT_ITEMS_PER_ROW then
-			local numRows = math.ceil(numSnapshots/BATTLEPETTABSFLYOUT_ITEMS_PER_ROW)
-			local bgTex, lastBGTex
-			bgTex = buttonAnchor.bg1
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_MULTIROW_TOP_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_MULTIROW_WIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_MULTIROW_TOP_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", -5, 4)
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-			lastBGTex = bgTex
-			for i = 2, numRows - 1 do -- Middle rows
-				bgTex = buttonAnchor["bg"..i] or BattlePetTabFlyout_CreateBackground(buttonAnchor)
-				bgTex:ClearAllPoints()
-				bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_MULTIROW_MIDDLE_COORDS))
-				bgTex:SetWidth(BATTLEPETTABSFLYOUT_MULTIROW_WIDTH)
-				bgTex:SetHeight(BATTLEPETTABSFLYOUT_MULTIROW_MIDDLE_HEIGHT)
-				bgTex:SetPoint("TOPLEFT", lastBGTex, "BOTTOMLEFT")
-				bgTex:Show()
-				texturesUsed = texturesUsed + 1
-				lastBGTex = bgTex
-			end
-
-			bgTex = buttonAnchor["bg"..numRows] or BattlePetTabFlyout_CreateBackground(buttonAnchor)
-			bgTex:ClearAllPoints()
-			bgTex:SetTexCoord(unpack(BATTLEPETTABSFLYOUT_MULTIROW_BOTTOM_COORDS))
-			bgTex:SetWidth(BATTLEPETTABSFLYOUT_MULTIROW_WIDTH)
-			bgTex:SetHeight(BATTLEPETTABSFLYOUT_MULTIROW_BOTTOM_HEIGHT)
-			bgTex:SetPoint("TOPLEFT", lastBGTex, "BOTTOMLEFT")
-			bgTex:Show()
-			texturesUsed = texturesUsed + 1
-			lastBGTex = bgTex
-		end
-
-		for i = texturesUsed + 1, buttonAnchor.numBGs do
-			buttonAnchor["bg" .. i]:Hide()
-		end
-
-		self.numSnapshots = numSnapshots
-	end
-end
-
-function Initialize() -- local
-	Initialize = function() end
-
-	StaticPopupDialogs["BATTLETABS_TEAM_RENAME"] = {
-		text = "What do you wish to rename |cffffd200%s|r to?",
+	-- create rename static popup
+	StaticPopupDialogs[addonName .. "_TEAM_RENAME"] = {
+		text = "",
 		button1 = ACCEPT,
 		button2 = CANCEL,
 		hasEditBox = 1,
-		maxLetters = 30,
-		OnAccept = function(self)
-			ApplyRename(self.data, self.editBox:GetText())
+		maxLetters = 32,
+		OnAccept = function(self, team)
+			local text = self.editBox:GetText()
+			if type(text) == "string" and text:len() > 0 then
+				team.name = text
+			end
 		end,
-		EditBoxOnEnterPressed = function(self)
-			local parent = self:GetParent()
-			ApplyRename(parent.data, parent.editBox:GetText())
-			parent:Hide()
+		EditBoxOnEnterPressed = function(self, team)
+			local text = self:GetParent().editBox:GetText()
+			if type(text) == "string" and text:len() > 0 then
+				team.name = text
+			end
+			self:GetParent():Hide()
 		end,
-		OnShow = function(self)
+		EditBoxOnEscapePressed = function(self)
+			self:GetParent():Hide()
+		end,
+		OnShow = function(self, team)
+			self.text:SetFormattedText("What do you want to rename \"%s\" to?", team.name or "Team")
 			self.editBox:SetFocus()
 		end,
 		OnHide = function(self)
-			ChatEdit_FocusActiveWindow()
 			self.editBox:SetText("")
 		end,
 		timeout = 0,
 		exclusive = 1,
-		hideOnEscape = 1,
+		whileDead = 1,
+		hideOnEscape = 1
 	}
+end
 
-	StaticPopupDialogs["BATTLETABS_TEAM_DELETE"] = {
-		text = "Are you sure you want to delete team |cffffd200%s|r?",
-		button1 = OKAY,
-		button2 = CANCEL,
-		OnAccept = function(self)
-			ApplyDelete(self.data)
-		end,
-		timeout = 0,
-		exclusive = 1,
-		hideOnEscape = 1,
-	}
+-- create pet button
+function addon:CreatePetButton(id)
+	local frame = CreateFrame("Frame", addonName .. "Team" .. id)
+	frame:SetSize(42, 50)
+	frame:SetPoint("TOPLEFT")
 
-	StaticPopupDialogs["BATTLETABS_SNAPSHOT_DELETE"] = {
-		text = "Are you sure you want to delete snapshot |cffffd200%s|r?",
-		button1 = OKAY,
-		button2 = CANCEL,
-		OnAccept = function(self)
-			ApplySnapshotDelete(self.data)
-		end,
-		timeout = 0,
-		exclusive = 1,
-		hideOnEscape = 1,
-	}
+	frame.background = frame:CreateTexture(nil, "BACKGROUND")
+	frame.background:SetTexture("Interface\\GuildBankFrame\\UI-GuildBankFrame-Tab")
+	frame.background:SetSize(64, 64)
+	frame.background:SetPoint("TOPLEFT")
+	frame.background:SetShown(not addon.HasAurora)
 
-	local tabs = CreateFrame("Frame", frameName, PetJournal)
-	tabs:SetSize(42, 50)
-	tabs:SetPoint("TOPLEFT", "$parent", "TOPRIGHT", -1, -17)
-	tabs:HookScript("OnShow", Update)
+	frame.button = CreateFrame("CheckButton", nil, frame)
+	frame.button:SetSize(36, 34)
+	frame.button:SetPoint("TOPLEFT", 2, -8)
+	frame.button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+	frame.button:RegisterForDrag("LeftButton")
+	frame.button:SetMotionScriptsWhileDisabled(true)
 
-	local tab = CreateFrame("Frame", "$parentTabManager", tabs, "BattlePetTabTemplate")
-	tab:SetID(0)
-	tab:SetPoint("TOPLEFT", tabs, "BOTTOMLEFT", 0, 0)
-	tab.button.checked:SetTexture(nil)
-	tab.button.icon:SetTexture("Interface\\Icons\\INV_Pet_Achievement_CaptureAWildPet")
-	tab.button.tooltip = "Snapshot Manager"
-	tab.button.snapshotManager = 1
-	tab.button:SetScript("OnDragStart", nil)
-	tab.button:SetScript("OnClick", function(self)
-		PlaySound("igMainMenuOptionCheckBoxOn")
-		if BattlePetTabFlyoutFrame:IsVisible() then
-			BattlePetTabFlyoutFrame:Hide()
-		else
-			BattlePetTabFlyoutFrame:Show()
+	frame.button:SetScript("OnClick", addon.Widget.PetButton.OnClick)
+	frame.button:SetScript("OnDragStart", addon.Widget.PetButton.OnDragStart)
+	frame.button:SetScript("OnDragStop", addon.Widget.PetButton.OnDragStop)
+	frame.button:SetScript("OnReceiveDrag", addon.Widget.PetButton.OnReceiveDrag)
+	frame.button:SetScript("OnEnter", addon.Widget.PetButton.OnEnter)
+	frame.button:SetScript("OnLeave", addon.Widget.PetButton.OnLeave)
+
+	-- frame.button:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+	frame.button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+	frame.button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+	frame.button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD") -- TODO: "ADD" ?
+
+	frame.icon = frame.button:CreateTexture(nil, "BORDER")
+	frame.icon:SetPoint("TOPLEFT", 1, -1)
+	frame.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+	frame.icon:SetTexCoord(.1, .9, .1, .9)
+	frame.icon:SetTexture("Interface\\Icons\\Temp")
+
+	frame.count = frame.button:CreateFontString(nil, "BORDER", "NumberFontNormal")
+	frame.count:SetJustifyH("RIGHT")
+	frame.count:SetPoint("BOTTOMRIGHT", -5, 2)
+
+	frame.overlay = frame.button:CreateTexture(nil, "ARTWORK", nil, -4)
+	frame.overlay:SetAllPoints()
+	frame.overlay:SetTexture(0, 0, 0, .8)
+	frame.overlay:Hide()
+
+	return frame
+end
+
+-- create flyout frame
+function addon:CreateFlyout(parent)
+	local frame = CreateFrame("Frame", "$parentFlyout", parent or UIParent)
+	frame:Hide()
+	frame:SetPoint("TOPLEFT", "$parent", "TOPRIGHT", 0, -8)
+	frame:SetSize(1, 1) -- otherwise it's invisible
+
+	frame:SetScript("OnShow", addon.Widget.Flyout.OnShow)
+	frame:SetScript("OnHide", addon.Widget.Flyout.OnHide)
+	frame:SetScript("OnUpdate", addon.Widget.Flyout.OnUpdate)
+
+	frame.CreateButton = addon.Widget.Flyout.CreateButton
+	frame.GetButton = addon.Widget.Flyout.GetButton
+
+	return frame
+end
+
+-- pickup team when dragging
+function addon:DraggingPickupTeam(team)
+	ClearCursor()
+	if type(team) == "table" then
+		local _, firstPet = next(team)
+		if firstPet and firstPet[1] then
+			C_PetJournal_PickupPet(firstPet[1])
 		end
-	end)
-	tab.button:HookScript("OnHide", function(self)
-		BattlePetTabFlyoutFrame:Hide()
-	end)
-	BattlePetTabFlyoutFrame.managerButton = tab.button
+	end
+end
 
-	for i = 1, numTabs do
-		tabs[i] = CreateFrame("Frame", "$parentTab" .. i, tabs, "BattlePetTabTemplate")
-		tabs[i]:SetID(i)
-		tabs[i]:SetPoint("TOPLEFT", tab or "$parent", "BOTTOMLEFT", 0, 0)
-		tab = "$parentTab" .. i
+-- move pet from one location to another
+function addon:MoveTo(src, dst)
+	if not src or not dst then
+		return -- both must exist
+	elseif src == dst then
+		return -- pointless to move to the same location
+	elseif dst.command == FLYOUT_COMMAND_NEW then
+		return -- can't move to the new button
 	end
 
-	do
-		local function onClick(...)
-			if InCombatLockdown() then
-				return
-			end
-			PetJournalPetLoadoutDragButton_OnClick(...)
-		end
+	-- team variables
+	local srcIsInactive, srcTeam, srcIndex = not not src.command, src.dbTeam
+	local dstIsInactive, dstTeam, dstIndex = not not dst.command, dst.dbTeam
 
-		local function onDragStart(...)
-			if InCombatLockdown() then
-				return
-			end
-			PetJournalDragButton_OnDragStart(...)
+	-- active teams
+	for i, team in ipairs(BattlePetTabsDB3.Teams) do
+		if not srcIndex and not srcIsInactive and team == srcTeam then
+			srcIndex = i
 		end
+		if not dstIndex and not dstIsInactive and team == dstTeam then
+			dstIndex = i
+		end
+		if srcIndex and dstIndex then
+			break
+		end
+	end
+
+	-- inactive teams
+	if not srcIndex or not dstIndex then
+		for i, team in ipairs(BattlePetTabsDB3.Inactive) do
+			if not srcIndex and srcIsInactive and team == srcTeam then
+				srcIndex = i
+			end
+			if not dstIndex and dstIsInactive and team == dstTeam then
+				dstIndex = i
+			end
+			if srcIndex and dstIndex then
+				break
+			end
+		end
+	end
+
+	-- DEBUG
+	--print("S", srcTeam and "Y" or "N", srcIndex, "D", dstTeam and "Y" or "N", dstIndex, "C", dst.command, "")
+
+	-- logic
+	if srcIsInactive and dstIsInactive then
+		-- swap two inactive teams
+		if srcIndex and dstIndex then
+			local teamA = BattlePetTabsDB3.Inactive[srcIndex]
+			local teamB = BattlePetTabsDB3.Inactive[dstIndex]
+			BattlePetTabsDB3.Inactive[srcIndex] = teamB
+			BattlePetTabsDB3.Inactive[dstIndex] = teamA
+		end
+	elseif not srcIsInactive and not dstIsInactive then
+		-- swap two active teams
+		if srcIndex and dstIndex then
+			local teamA = BattlePetTabsDB3.Teams[srcIndex]
+			local teamB = BattlePetTabsDB3.Teams[dstIndex]
+			BattlePetTabsDB3.Teams[srcIndex] = teamB
+			BattlePetTabsDB3.Teams[dstIndex] = teamA
+		end
+	elseif srcIsInactive and not dstIsInactive then
+		-- swap an inactive team with an active one
+		if srcIndex and dstIndex then
+			local teamA = BattlePetTabsDB3.Inactive[srcIndex]
+			local teamB = BattlePetTabsDB3.Teams[dstIndex]
+			BattlePetTabsDB3.Inactive[srcIndex] = teamB
+			BattlePetTabsDB3.Teams[dstIndex] = teamA
+		-- activate an inactive team
+		elseif srcIndex and not dstIndex then
+			-- only if we have space for an additional active team
+			if #BattlePetTabsDB3.Teams < MAX_BATTLE_TABS then
+				local team = table.remove(BattlePetTabsDB3.Inactive, srcIndex)
+				table.insert(BattlePetTabsDB3.Teams, team)
+			end
+		end
+	elseif not srcIsInactive and dstIsInactive then
+		-- swap an active team with an inactive one
+		if srcIndex and dstIndex then
+			local teamA = BattlePetTabsDB3.Teams[srcIndex]
+			local teamB = BattlePetTabsDB3.Inactive[dstIndex]
+			BattlePetTabsDB3.Teams[srcIndex] = teamB
+			BattlePetTabsDB3.Inactive[dstIndex] = teamA
+		-- deactivate an active team
+		elseif srcIndex and not dstIndex then
+			-- only if we have space for an additional active team
+			if #BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS then
+				local team = table.remove(BattlePetTabsDB3.Teams, srcIndex)
+				table.insert(BattlePetTabsDB3.Inactive, team)
+			end
+		end
+	end
+
+	-- force update the UI
+	addon:UPDATE()
+end
+
+-- copy loadout
+function addon:CopyLoadout()
+	local team = {}
+	team.name = "Team"
+
+	for i = 1, MAX_ACTIVE_PETS do
+		local petID, ability1ID, ability2ID, ability3ID, locked = C_PetJournal_GetPetLoadOutInfo(i)
+
+		table.insert(team, {petID, ability1ID, ability2ID, ability3ID})
+	end
+
+	return team
+end
+
+-- rename team
+function addon:RenameTeam(team)
+	assert(type(team) == "table", "BattlePetTabs:RenameTeam(team) expected first argument to be a table")
+	StaticPopup_Show(addonName .. "_TEAM_RENAME", nil, nil, team)
+end
+
+-- set loadout at login
+function addon:SetLoginLoadOut()
+	local index = tonumber(BattlePetTabsDB3.LoadOutTeamIndex, 10) or 0
+	if not index then
+		index = #BattlePetTabsDB3.Teams
+	end
+	if index > 0 then
+		local team = BattlePetTabsDB3.Teams[index]
+		addon:EquipTeamLoadout(team)
+	end
+end
+
+-- find a team index from the active teams
+function addon:GetTeamIndex(team, fallback)
+	for i, t in ipairs(BattlePetTabsDB3.Teams) do
+		if t == team then
+			return i
+		end
+	end
+	if fallback then
+		local i = BattlePetTabsDB3.Teams
+		if i then
+			return i
+		end
+	end
+end
+
+-- equip a team
+function addon:EquipTeamLoadout(team)
+	BattlePetTabsDB3.LoadOutTeamIndex = addon:GetTeamIndex(team, true)
+	addon.EquippedLoadOut = team
+	addon.LoadingLoadOut = true
+
+	if type(team) == "table" then
+		local recheck, firstPet
 
 		for i = 1, MAX_ACTIVE_PETS do
-			local button = _G["PetJournalLoadoutPet" .. i]
-			button.dragButton:SetScript("OnClick", onClick)
-			button.dragButton:SetScript("OnDragStart", onDragStart)
+			local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal_GetPetLoadOutInfo(i)
+			local pet = team[i]
+
+			if type(pet) == "table" then
+				if not locked then
+					local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
+					firstPet = petID
+
+					if equippedPetID ~= petID then
+						C_PetJournal_SetPetLoadOutInfo(i, petID)
+						recheck = true
+					else
+						if equippedAbility1ID ~= ability1ID then
+							C_PetJournal_SetAbility(i, 1, ability1ID)
+							recheck = true
+						end
+						if equippedAbility2ID ~= ability2ID then
+							C_PetJournal_SetAbility(i, 2, ability2ID)
+							recheck = true
+						end
+						if equippedAbility3ID ~= ability3ID then
+							C_PetJournal_SetAbility(i, 3, ability3ID)
+							recheck = true
+						end
+					end
+				end
+			end
+		end
+
+		-- if not all pets or abilities were loaded we will check again really soon
+		if recheck then
+			C_Timer_After(.1, function()
+				addon:EquipTeamLoadout(team)
+			end)
+		end
+
+		-- update the pet journal UI
+		PetJournal_UpdatePetLoadOut()
+	end
+
+	addon.LoadingLoadOut = nil
+end
+
+-- is team equipped
+function addon:IsTeamEquipped(team)
+	if type(team) == "table" then
+		for i = 1, MAX_ACTIVE_PETS do
+			local pet = team[i]
+			if type(pet) ~= "table" then
+				return false
+			end
+			local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal_GetPetLoadOutInfo(i)
+			local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
+			if equippedPetID ~= petID then
+				return false
+			end
+			if equippedAbility1ID ~= ability1ID then
+				return false
+			end
+			if equippedAbility2ID ~= ability2ID then
+				return false
+			end
+			if equippedAbility3ID ~= ability3ID then
+				return false
+			end
+		end
+	end
+	return true
+end
+
+-- get team texture
+function addon:GetTeamTexture(team)
+	local texture = "Interface\\Icons\\INV_Misc_QuestionMark"
+	if type(team) == "table" then
+		local _, firstPet = next(team)
+		if firstPet and firstPet[1] then
+			_, _, _, _, _, _, _, _, texture = C_PetJournal_GetPetInfoByPetID(firstPet[1])
+		end
+	end
+	return texture
+end
+
+-- get team tooltip string
+function addon:GetTeamTooltipString(team)
+	if type(team) == "table" then
+		local lines = ""
+
+		for i = 1, #team do
+			local pet = team[i]
+
+			if type(pet) == "table" then
+				local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
+				local speciesID, customName, level, xp, maxXp, displayID, isFavorite, name, icon, petType, creatureID, sourceText, description, isWild, canBattle, tradable, unique = C_PetJournal_GetPetInfoByPetID(petID)
+
+				if speciesID then
+					local health, maxHealth, power, speed, rarity = C_PetJournal_GetPetStats(petID)
+					local color = ITEM_QUALITY_COLORS[rarity - 1]
+
+					lines = lines .. "L" .. level .. " "
+					lines = lines .. "|T" .. icon .. ":-1:-1|t "
+					lines = lines .. color.hex .. (customName or name) .. "|r "
+					lines = lines .. format("|cff00FF00%d|r/|cff00FFFF%d|r/|cffFFFF00%d|r", health/maxHealth*100, power, speed) .. " "
+					lines = lines .. "\n"
+				end
+			end
+		end
+
+		lines = lines:sub(1, lines:len() - 1)
+
+		if lines ~= "" then
+			return "\n" .. lines
+		end
+	end
+end
+
+-- widget handlers
+do
+	addon.Widget = {}
+
+	-- hide all flyouts and uncheck all buttons
+	addon.Widget.HideFlyouts = function(button)
+		if addon.Manager.button ~= button then
+			addon.Manager.button:SetChecked(false)
+			addon.Manager.flyout:Hide()
+		end
+
+		for _, team in pairs(addon.Teams) do
+			if team.button ~= button then
+				team.button:SetChecked(false)
+				team.flyout:Hide()
+			end
+			if addon:IsTeamEquipped(team) then
+				team.button:SetChecked(true)
+			end
 		end
 	end
 
-	hooksecurefunc(C_PetJournal, "SetPetLoadOutInfo", UpdateTeamLoadOut)
-	hooksecurefunc(C_PetJournal, "SetAbility", UpdateTeamLoadOutAbilities)
-	GameTooltip:HookScript("OnShow", onGameTooltipShow)
+	-- tooltip handlers
+	do
+		addon.Tooltip = {}
 
-	addon:RegisterEvent("COMPANION_UPDATE")
-	addon:RegisterEvent("LFG_LOCK_INFO_RECEIVED")
-	addon:RegisterEvent("LFG_UPDATE_RANDOM_INFO")
-	addon:RegisterEvent("PET_BATTLE_CLOSE")
-	addon:RegisterEvent("PET_BATTLE_OPENING_START")
-	addon:RegisterEvent("PET_BATTLE_QUEUE_STATUS")
-	addon:RegisterEvent("PLAYER_REGEN_DISABLED")
-	addon:RegisterEvent("PLAYER_REGEN_ENABLED")
+		local tooltip = GameTooltip -- CreateFrame("GameTooltip", addonName .. "Tooltip", WorldFrame, "GameTooltipTemplate")
 
-	addon:HookScript("OnEvent", Update)
+		function addon.Tooltip:Show(frame, lines)
+			tooltip:SetOwner(frame, "ANCHOR_RIGHT")
+			if type(lines) == "string" then
+				tooltip:AddLine(lines, 1, 1, 1)
+			elseif type(lines) == "table" then
+				for _, line in ipairs(lines) do
+					tooltip:AddLine(line, 1, 1, 1)
+				end
+			end
+			tooltip:Show()
+		end
 
-	Update()
+		function addon.Tooltip:Hide()
+			tooltip:Hide()
+		end
+	end
+
+	-- container handlers
+	do
+		addon.Widget.Container = {}
+
+		function addon.Widget.Container.OnShow(self)
+			addon.Widget.HideFlyouts()
+			addon:DraggingPickupTeam()
+
+			addon.IsDraggingTeam = nil
+			addon.IsDraggingInactiveTeam = nil
+
+			addon:UPDATE()
+		end
+	end
+
+	-- manager handlers
+	do
+		addon.Widget.Manager = {}
+
+		function addon.Widget.Manager.OnClick(self)
+			addon.Widget.HideFlyouts(self)
+
+			if self:GetChecked() then
+				self:GetParent().flyout:Show()
+			else
+				self:GetParent().flyout:Hide()
+			end
+		end
+
+		function addon.Widget.Manager.OnEnter(self)
+			if not addon.IsDraggingInactiveTeam then
+				addon.Tooltip:Show(self, addonName)
+			end
+		end
+
+		function addon.Widget.Manager.OnLeave(self)
+			addon.Tooltip:Hide()
+		end
+	end
+
+	-- pet button handlers
+	do
+		addon.Widget.PetButton = {}
+
+		function addon.Widget.PetButton.OnClick(self, button)
+			addon.Widget.HideFlyouts(self)
+
+			if button == "RightButton" then
+				if self:GetChecked() then
+					self:GetParent().flyout:Show()
+				else
+					self:GetParent().flyout:Hide()
+				end
+			else
+				self:GetParent().flyout:Hide()
+				self:SetChecked(false)
+
+				addon:EquipTeamLoadout(self:GetParent().dbTeam)
+
+				addon:UPDATE()
+			end
+		end
+
+		function addon.Widget.PetButton.OnDragStart(self)
+			self:LockHighlight()
+			self:GetParent().flyout:Hide()
+
+			addon.IsDraggingTeam = self:GetParent()
+			addon:DraggingPickupTeam(self:GetParent().dbTeam)
+			addon:UPDATE()
+		end
+
+		function addon.Widget.PetButton.OnDragStop(self)
+			self:UnlockHighlight()
+
+			addon:DraggingPickupTeam()
+			addon:UPDATE()
+
+			C_Timer_After(.001, function()
+				addon.IsDraggingTeam = nil
+				addon:UPDATE()
+			end)
+		end
+
+		function addon.Widget.PetButton.OnReceiveDrag(self)
+			if addon.IsDraggingInactiveTeam then
+				addon:MoveTo(addon.IsDraggingInactiveTeam, self:GetParent(), true, false)
+			elseif addon.IsDraggingTeam then
+				addon:MoveTo(addon.IsDraggingTeam, self:GetParent(), false, false)
+			end
+
+			addon.IsDraggingInactiveTeam = nil
+			addon.IsDraggingTeam = nil
+			addon:UPDATE()
+		end
+
+		function addon.Widget.PetButton.OnEnter(self)
+			if addon.IsDraggingInactiveTeam then
+				addon.DraggedTeamTo = self
+				if self.dbTeam then
+					addon.Tooltip:Show(self, {self.dbTeam and self.dbTeam.name or "Team", "Release to swap with this team."})
+				else
+					addon.Tooltip:Show(self, {"Team", "Release to place team on this slot."})
+				end
+			else
+				local dbTeam = self:GetParent().dbTeam
+				local lines = {dbTeam and dbTeam.name or "Team", "Left-click to equip as current loadout.", "Right-click for additional options.", "Drag to move team."}
+				local tooltip = addon:GetTeamTooltipString(dbTeam)
+				if tooltip then
+					table.insert(lines, tooltip)
+				end
+				addon.Tooltip:Show(self, lines)
+			end
+		end
+
+		function addon.Widget.PetButton.OnLeave(self)
+			addon.Tooltip:Hide()
+		end
+	end
+
+	-- flyout handlers
+	do
+		addon.Widget.Flyout = {}
+
+		function addon.Widget.Flyout.OnShow(self)
+		end
+
+		function addon.Widget.Flyout.OnHide(self)
+		end
+
+		function addon.Widget.Flyout.OnUpdate(self)
+		end
+
+		function addon.Widget.Flyout.CreateButton(self, command)
+			local numButtons = #self
+			local buttonIndex = numButtons + 1
+
+			local button = CreateFrame("CheckButton", "$parent" .. buttonIndex, self)
+			button.command = command
+			button:SetSize(BATTLEPETTABSFLYOUT_ITEM_WIDTH, BATTLEPETTABSFLYOUT_ITEM_HEIGHT)
+			button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+			button:RegisterForDrag("LeftButton")
+			button:SetMotionScriptsWhileDisabled(true)
+
+			local position = numButtons / BATTLEPETTABSFLYOUT_ITEMS_PER_ROW
+			if position == math.floor(position) then
+				button:SetPoint("TOPLEFT", self, "TOPLEFT", BATTLEPETTABSFLYOUT_BORDERWIDTH, -BATTLEPETTABSFLYOUT_BORDERWIDTH - (BATTLEPETTABSFLYOUT_ITEM_HEIGHT - BATTLEPETTABSFLYOUT_ITEM_YOFFSET) * position)
+			else
+				button:SetPoint("TOPLEFT", self[numButtons], "TOPRIGHT", BATTLEPETTABSFLYOUT_ITEM_XOFFSET, 0)
+			end
+
+			button:SetScript("OnShow", addon.Widget.Flyout.Button.OnShow)
+			button:SetScript("OnClick", addon.Widget.Flyout.Button.OnClick)
+			button:SetScript("OnDragStart", addon.Widget.Flyout.Button.OnDragStart)
+			button:SetScript("OnDragStop", addon.Widget.Flyout.Button.OnDragStop)
+			button:SetScript("OnReceiveDrag", addon.Widget.Flyout.Button.OnReceiveDrag)
+			button:SetScript("OnEnter", addon.Widget.Flyout.Button.OnEnter)
+			button:SetScript("OnLeave", addon.Widget.Flyout.Button.OnLeave)
+
+			-- button:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
+			button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
+			button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+			button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD") -- TODO: "ADD" ?
+
+			button.icon = button:CreateTexture(nil, "BORDER")
+			button.icon:SetPoint("TOPLEFT", 1, -1)
+			button.icon:SetPoint("BOTTOMRIGHT", -1, 1)
+			button.icon:SetTexCoord(.1, .9, .1, .9)
+			button.icon:SetTexture("Interface\\Icons\\Temp")
+
+			button.count = button:CreateFontString(nil, "BORDER", "NumberFontNormal")
+			button.count:SetJustifyH("RIGHT")
+			button.count:SetPoint("BOTTOMRIGHT", -5, 2)
+
+			button.overlay = button:CreateTexture(nil, "ARTWORK", nil, -4)
+			button.overlay:SetAllPoints()
+			button.overlay:SetTexture(0, 0, 0, .8)
+			button.overlay:Hide()
+
+			table.insert(self, button)
+			return button
+		end
+
+		function addon.Widget.Flyout.GetButton(self)
+			local button
+
+			for i = 1, #self do
+				local b = self[i]
+
+				if not b:IsShown() then
+					button = b
+					break
+				end
+			end
+
+			if not button then
+				button = self:CreateButton()
+				button:SetID(#self + 1)
+			end
+
+			return button
+		end
+
+		-- flyout button handlers
+		do
+			addon.Widget.Flyout.Button = {}
+
+			function addon.Widget.Flyout.Button.OnShow(self)
+				if self.command == FLYOUT_COMMAND_NEW then
+					self.icon:SetTexture("Interface\\GuildBankFrame\\UI-GuildBankFrame-NewTab")
+				elseif self.command == FLYOUT_COMMAND_MOVETO then
+					self.icon:SetTexture("Interface\\Icons\\Misc_ArrowDown")
+				elseif self.command == FLYOUT_COMMAND_RENAME then
+					self.icon:SetTexture("Interface\\Icons\\INV_Scroll_02")
+				elseif self.command == FLYOUT_COMMAND_DELETE then
+					self.icon:SetTexture("Interface\\Icons\\INV_Misc_Bone_HumanSkull_01")
+				end
+			end
+
+			function addon.Widget.Flyout.Button.OnClick(self, button)
+				self:SetChecked(false)
+
+				if self.command == FLYOUT_COMMAND_NEW then
+					if #BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS then
+						local team = addon:CopyLoadout()
+						table.insert(BattlePetTabsDB3.Inactive, team)
+					end
+
+				elseif self.command == FLYOUT_COMMAND_RENAME then
+					local dbTeam = self:GetParent():GetParent().dbTeam
+					if dbTeam then
+						addon:RenameTeam(dbTeam)
+					end
+
+				elseif self.command == FLYOUT_COMMAND_DELETE then
+					local dbTeam = self:GetParent():GetParent().dbTeam
+					for i, team in ipairs(BattlePetTabsDB3.Teams) do
+						if team == dbTeam then
+							table.remove(BattlePetTabsDB3.Teams, i)
+							break
+						end
+					end
+
+				elseif self.command == FLYOUT_COMMAND_TEAM then
+					if button == "RightButton" then
+						for i, team in ipairs(BattlePetTabsDB3.Inactive) do
+							if self.dbTeam == team then
+								table.remove(BattlePetTabsDB3.Inactive, i)
+								break
+							end
+						end
+					end
+				end
+
+				addon:UPDATE()
+			end
+
+			function addon.Widget.Flyout.Button.OnDragStart(self)
+				if self.command == FLYOUT_COMMAND_TEAM then
+					self:LockHighlight()
+
+					addon.IsDraggingInactiveTeam = self
+					addon:DraggingPickupTeam(self.dbTeam)
+					addon:UPDATE()
+				end
+			end
+
+			function addon.Widget.Flyout.Button.OnDragStop(self)
+				if self.command == FLYOUT_COMMAND_TEAM then
+					self:UnlockHighlight()
+
+					addon:DraggingPickupTeam()
+					addon:UPDATE()
+
+					C_Timer_After(.001, function()
+						addon.IsDraggingInactiveTeam = nil
+						addon:UPDATE()
+					end)
+				end
+			end
+
+			function addon.Widget.Flyout.Button.OnReceiveDrag(self)
+				if addon.IsDraggingInactiveTeam then
+					addon:MoveTo(addon.IsDraggingInactiveTeam, self, true, false)
+				elseif addon.IsDraggingTeam then
+					addon:MoveTo(addon.IsDraggingTeam, self, false, false)
+				end
+
+				addon.IsDraggingInactiveTeam = nil
+				addon.IsDraggingTeam = nil
+				addon:UPDATE()
+			end
+
+			function addon.Widget.Flyout.Button.OnEnter(self)
+				if self.command == FLYOUT_COMMAND_NEW then
+					if not addon.IsDraggingInactiveTeam then
+						if self:IsEnabled() then
+							addon.Tooltip:Show(self, {"New", "Creates a copy of the current loadout."})
+						else
+							addon.Tooltip:Show(self, {"New", "Can't create additional teams.", "Delete unused teams to free up space."})
+						end
+					end
+				elseif self.command == FLYOUT_COMMAND_MOVETO then
+					if addon.IsDraggingTeam then
+						if self:IsEnabled() then
+							addon.Tooltip:Show(self, {"Deactivate", "Places the team with the other inactive teams."})
+						else
+							addon.Tooltip:Show(self, {"Deactivate", "Can't deactive team.", "Delete unused inactive teams to free up space."})
+						end
+					end
+				elseif self.command == FLYOUT_COMMAND_RENAME then
+					if not addon.IsDraggingInactiveTeam then
+						addon.Tooltip:Show(self, "Rename")
+					end
+				elseif self.command == FLYOUT_COMMAND_DELETE then
+					if not addon.IsDraggingInactiveTeam then
+						addon.Tooltip:Show(self, {"Delete", "This can't be undone."})
+					end
+				elseif self.command == FLYOUT_COMMAND_TEAM then
+					if addon.IsDraggingInactiveTeam then
+						addon.DraggedTeamTo = self
+						addon.Tooltip:Show(self, {self.dbTeam and self.dbTeam.name or "Team", "Release to move team to this position."})
+					else
+						local lines = {self.dbTeam and self.dbTeam.name or "Team", "Drag to move team.", "Right-click to delete."}
+						local tooltip = addon:GetTeamTooltipString(self.dbTeam)
+						if tooltip then
+							table.insert(lines, tooltip)
+						end
+						addon.Tooltip:Show(self, lines)
+					end
+				end
+			end
+
+			function addon.Widget.Flyout.Button.OnLeave(self)
+				addon.Tooltip:Hide()
+			end
+		end
+	end
+end
+
+-- update the current team when loadout is manually changed
+do
+	hooksecurefunc(C_PetJournal, "SetPetLoadOutInfo", function(slotIndex, petID)
+		if not addon.LoadingLoadOut and addon.EquippedLoadOut then
+			local loadout = addon:CopyLoadout()
+			for i = 1, MAX_ACTIVE_PETS do
+				addon.EquippedLoadOut[i] = loadout[i]
+			end
+		end
+	end)
+
+	hooksecurefunc(C_PetJournal, "SetAbility", function(slotIndex, abilityIndex, abilityID)
+		if not addon.LoadingLoadOut and addon.EquippedLoadOut then
+			addon.EquippedLoadOut[slotIndex][abilityIndex + 1] = abilityID
+		end
+	end)
 end
