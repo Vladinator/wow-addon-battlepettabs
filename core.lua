@@ -24,7 +24,6 @@ local type = type
 local addonName = ...
 local addon = CreateFrame("Frame")
 addon:SetScript("OnEvent", function(self, event, ...) self[event](self, event, ...) end)
-addon:RegisterEvent("ADDON_LOADED")
 
 -- variables
 local MAX_BATTLE_TABS = 10 -- 8 to 10 for most natural results
@@ -68,6 +67,7 @@ function addon:ADDON_LOADED(event, name)
 		addon.NumLoaded = addon.NumLoaded + 1
 	end
 	if addon.NumLoaded >= 2 then
+		addon.ADDON_LOADED = function() end
 		addon.PetJournalName, addon.NumLoaded = nil
 		addon:UnregisterEvent(event)
 		addon:CreateUI()
@@ -994,3 +994,6 @@ do
 		end
 	end)
 end
+
+-- gets the ball rolling
+addon:RegisterEvent("ADDON_LOADED")
