@@ -4,6 +4,8 @@ local C_PetJournal = C_PetJournal
 local C_PetJournal_GetPetInfoByPetID = C_PetJournal.GetPetInfoByPetID
 local C_PetJournal_GetPetLoadOutInfo = C_PetJournal.GetPetLoadOutInfo
 local C_PetJournal_GetPetStats = C_PetJournal.GetPetStats
+local C_PetJournal_IsJournalUnlocked = C_PetJournal.IsJournalUnlocked
+local C_PetBattles_IsInBattle = C_PetBattles.IsInBattle
 local C_PetJournal_PickupPet = C_PetJournal.PickupPet
 local C_PetJournal_SetAbility = C_PetJournal.SetAbility
 local C_PetJournal_SetPetLoadOutInfo = C_PetJournal.SetPetLoadOutInfo
@@ -28,6 +30,7 @@ addon:SetScript("OnEvent", function(self, event, ...) self[event](self, event, .
 -- variables
 local MAX_BATTLE_TABS = 10 -- 8 to 10 for most natural results
 local MAX_ACTIVE_PETS = MAX_ACTIVE_PETS or 3
+local HEAL_PET_SPELL = HEAL_PET_SPELL or 125439
 local BATTLEPETTABSFLYOUT_BORDERWIDTH = 0
 local BATTLEPETTABSFLYOUT_ITEM_HEIGHT = 35
 local BATTLEPETTABSFLYOUT_ITEM_WIDTH = 35
@@ -420,6 +423,21 @@ function addon:MoveTo(src, dst)
 	addon:UPDATE()
 end
 
+-- can copy loadout
+function addon:CanCopyLoadout()
+	if not IsSpellKnown(HEAL_PET_SPELL) or not C_PetJournal_IsJournalUnlocked() or C_PetBattles_IsInBattle() then
+		return false -- we don't know how to use the pets, the journal is locked, or we are in a battle
+	end
+
+	for i = 1, MAX_ACTIVE_PETS do
+		if C_PetJournal_GetPetLoadOutInfo(i) then
+			return true
+		end
+	end
+
+	return false
+end
+
 -- copy loadout
 function addon:CopyLoadout()
 	local team = {}
@@ -428,7 +446,9 @@ function addon:CopyLoadout()
 	for i = 1, MAX_ACTIVE_PETS do
 		local petID, ability1ID, ability2ID, ability3ID, locked = C_PetJournal_GetPetLoadOutInfo(i)
 
-		table.insert(team, {petID, ability1ID, ability2ID, ability3ID})
+		if petID then
+			table.insert(team, {petID, ability1ID, ability2ID, ability3ID})
+		end
 	end
 
 	return team
@@ -789,6 +809,7 @@ do
 			end
 
 			button:SetScript("OnShow", addon.Widget.Flyout.Button.OnShow)
+			button:SetScript("OnUpdate", addon.Widget.Flyout.Button.OnUpdate)
 			button:SetScript("OnClick", addon.Widget.Flyout.Button.OnClick)
 			button:SetScript("OnDragStart", addon.Widget.Flyout.Button.OnDragStart)
 			button:SetScript("OnDragStop", addon.Widget.Flyout.Button.OnDragStop)
@@ -856,11 +877,19 @@ do
 				end
 			end
 
+			function addon.Widget.Flyout.Button.OnUpdate(self)
+				if self.command == FLYOUT_COMMAND_NEW then
+					local disabled = not addon:CanCopyLoadout()
+					self.icon:SetDesaturated(disabled)
+					-- self:SetButtonState("NORMAL", not disabled) -- disables the OnClick
+				end
+			end
+
 			function addon.Widget.Flyout.Button.OnClick(self, button)
 				self:SetChecked(false)
 
 				if self.command == FLYOUT_COMMAND_NEW then
-					if #BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS then
+					if #BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS and addon:CanCopyLoadout() then
 						local team = addon:CopyLoadout()
 						table.insert(BattlePetTabsDB3.Inactive, team)
 					end
@@ -933,7 +962,9 @@ do
 			function addon.Widget.Flyout.Button.OnEnter(self)
 				if self.command == FLYOUT_COMMAND_NEW then
 					if not addon.IsDraggingInactiveTeam then
-						if self:IsEnabled() then
+						if not addon:CanCopyLoadout() then
+							addon.Tooltip:Show(self, {"New", "You are unable to use the Pet Journal at the moment."})
+						elseif self:IsEnabled() then
 							addon.Tooltip:Show(self, {"New", "Creates a copy of the current loadout."})
 						else
 							addon.Tooltip:Show(self, {"New", "Can't create additional teams.", "Delete unused teams to free up space."})
@@ -980,7 +1011,7 @@ end
 -- update the current team when loadout is manually changed
 do
 	hooksecurefunc(C_PetJournal, "SetPetLoadOutInfo", function(slotIndex, petID)
-		if not addon.LoadingLoadOut and addon.EquippedLoadOut then
+		if not addon.LoadingLoadOut and addon.EquippedLoadOut and addon:CanCopyLoadout() then
 			local loadout = addon:CopyLoadout()
 			for i = 1, MAX_ACTIVE_PETS do
 				addon.EquippedLoadOut[i] = loadout[i]
