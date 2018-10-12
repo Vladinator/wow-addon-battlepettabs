@@ -8,7 +8,7 @@ local C_PetJournal_IsJournalUnlocked = C_PetJournal.IsJournalUnlocked
 local C_PetBattles_IsInBattle = C_PetBattles.IsInBattle
 local C_PetJournal_PickupPet = C_PetJournal.PickupPet
 local C_PetJournal_SetAbility = C_PetJournal.SetAbility
-local C_PetJournal_SetPetLoadOutInfo = C_PetJournal.SetPetLoadOutInfo
+-- local C_PetJournal_SetPetLoadOutInfo = C_PetJournal.SetPetLoadOutInfo
 local C_Timer_After = C_Timer.After
 local ClearCursor = ClearCursor
 local CreateFrame = CreateFrame
@@ -240,6 +240,40 @@ function addon:CreateUI()
 		end,
 		OnHide = function(self)
 			self.editBox:SetText("")
+			addon:UPDATE()
+		end,
+		timeout = 0,
+		exclusive = 1,
+		whileDead = 1,
+		hideOnEscape = 1
+	}
+
+	-- create delete static popup
+	StaticPopupDialogs[addonName .. "_TEAM_DELETE"] = {
+		text = "",
+		button1 = DELETE,
+		button2 = CANCEL,
+		OnAccept = function(self, temp)
+			local team, collection, index = temp[1], temp[2], temp[3]
+			if collection then
+				if index and collection[index] == team then
+					table.remove(collection, index)
+				else
+					for k, v in ipairs(collection) do
+						if v == team then
+							table.remove(collection, k)
+							break
+						end
+					end
+				end
+			end
+		end,
+		OnShow = function(self, temp)
+			local team = temp[1]
+			self.text:SetFormattedText("Do you want to delete the team \"%s\"?", team.name or "Team")
+		end,
+		OnHide = function(self)
+			addon:UPDATE()
 		end,
 		timeout = 0,
 		exclusive = 1,
@@ -460,6 +494,12 @@ function addon:RenameTeam(team)
 	StaticPopup_Show(addonName .. "_TEAM_RENAME", nil, nil, team)
 end
 
+-- delete team
+function addon:DeleteTeam(team, tbr, tbi)
+	assert(type(team) == "table", "BattlePetTabs:DeleteTeam(team) expected first argument to be a table")
+	StaticPopup_Show(addonName .. "_TEAM_DELETE", nil, nil, { team, tbr, tbi })
+end
+
 -- set loadout at login
 function addon:SetLoginLoadOut()
 	local index = tonumber(BattlePetTabsDB3.LoadOutTeamIndex, 10) or 0
@@ -506,7 +546,7 @@ function addon:EquipTeamLoadout(team)
 					firstPet = petID
 
 					if equippedPetID ~= petID then
-						C_PetJournal_SetPetLoadOutInfo(i, petID)
+						C_PetJournal.SetPetLoadOutInfo(i, petID)
 						recheck = true
 					else
 						if equippedAbility1ID ~= ability1ID then
@@ -705,6 +745,9 @@ do
 			addon.Widget.HideFlyouts(self)
 
 			if button == "RightButton" then
+				addon:EquipTeamLoadout(self:GetParent().dbTeam)
+				self:SetChecked(true)
+
 				if self:GetChecked() then
 					self:GetParent().flyout:Show()
 				else
@@ -715,9 +758,9 @@ do
 				self:SetChecked(false)
 
 				addon:EquipTeamLoadout(self:GetParent().dbTeam)
-
-				addon:UPDATE()
 			end
+
+			addon:UPDATE()
 		end
 
 		function addon.Widget.PetButton.OnDragStart(self)
@@ -904,7 +947,7 @@ do
 					local dbTeam = self:GetParent():GetParent().dbTeam
 					for i, team in ipairs(BattlePetTabsDB3.Teams) do
 						if team == dbTeam then
-							table.remove(BattlePetTabsDB3.Teams, i)
+							addon:DeleteTeam(team, BattlePetTabsDB3.Teams, i)
 							break
 						end
 					end
@@ -913,10 +956,12 @@ do
 					if button == "RightButton" then
 						for i, team in ipairs(BattlePetTabsDB3.Inactive) do
 							if self.dbTeam == team then
-								table.remove(BattlePetTabsDB3.Inactive, i)
+								addon:DeleteTeam(team, BattlePetTabsDB3.Inactive, i)
 								break
 							end
 						end
+					elseif button == "LeftButton" then
+						addon:EquipTeamLoadout(self.dbTeam)
 					end
 				end
 
@@ -984,7 +1029,7 @@ do
 					end
 				elseif self.command == FLYOUT_COMMAND_DELETE then
 					if not addon.IsDraggingInactiveTeam then
-						addon.Tooltip:Show(self, {"Delete", "This can't be undone."})
+						addon.Tooltip:Show(self, "Delete") -- {"Delete", "This can't be undone."}
 					end
 				elseif self.command == FLYOUT_COMMAND_TEAM then
 					if addon.IsDraggingInactiveTeam then
@@ -1024,6 +1069,12 @@ do
 			addon.EquippedLoadOut[slotIndex][abilityIndex + 1] = abilityID
 		end
 	end)
+end
+
+-- attempt to block summoning pets when loading teams
+do
+	-- C_PetJournal.SetPetLoadOutInfo
+	-- addon.LoadingLoadOut
 end
 
 -- gets the ball rolling
