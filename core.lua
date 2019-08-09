@@ -102,9 +102,11 @@ function addon:UPDATE()
 		local dbTeam = BattlePetTabsDB3.Inactive[i]
 		team.dbTeam = dbTeam
 		if dbTeam then
+			team.checked:SetShown(addon:IsTeamEquipped(dbTeam))
 			team.icon:SetTexture(addon:GetTeamTexture(dbTeam))
 			team:Show()
 		else
+			team.checked:Hide()
 			team.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
 			team:Hide()
 		end
@@ -130,6 +132,15 @@ function addon:UPDATE()
 				team:Show()
 				break
 			end
+		end
+	end
+
+	-- force update the hover tooltip
+	local widget = GetMouseFocus()
+	if widget and type(widget) == "table" and type(widget.GetScript) == "function" then
+		local script = widget:GetScript("OnEnter")
+		if script then
+			script(widget)
 		end
 	end
 end
@@ -405,10 +416,13 @@ function addon:MoveTo(src, dst)
 	if srcIsInactive and dstIsInactive then
 		-- swap two inactive teams
 		if srcIndex and dstIndex then
-			local teamA = BattlePetTabsDB3.Inactive[srcIndex]
-			local teamB = BattlePetTabsDB3.Inactive[dstIndex]
-			BattlePetTabsDB3.Inactive[srcIndex] = teamB
-			BattlePetTabsDB3.Inactive[dstIndex] = teamA
+			-- don't swap, actually push the team in front the destination team and shift everything else back one slot
+			local team = table.remove(BattlePetTabsDB3.Inactive, srcIndex)
+			table.insert(BattlePetTabsDB3.Inactive, dstIndex, team)
+			-- local teamA = BattlePetTabsDB3.Inactive[srcIndex]
+			-- local teamB = BattlePetTabsDB3.Inactive[dstIndex]
+			-- BattlePetTabsDB3.Inactive[srcIndex] = teamB
+			-- BattlePetTabsDB3.Inactive[dstIndex] = teamA
 		end
 	elseif not srcIsInactive and not dstIsInactive then
 		-- swap two active teams
@@ -880,6 +894,12 @@ do
 			button.overlay:SetAllPoints()
 			button.overlay:SetTexture(0, 0, 0, .8)
 			button.overlay:Hide()
+
+			button.checked = button:CreateTexture(nil, "ARTWORK", nil, -3)
+			button.checked:SetAllPoints()
+			button.checked:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+			button.checked:SetBlendMode("ADD")
+			button.checked:Hide()
 
 			table.insert(self, button)
 			return button
