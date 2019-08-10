@@ -41,8 +41,9 @@ local RECHECK_TICKER
 -- load defaults or fallback to stored settings
 BattlePetTabsDB3 = type(BattlePetTabsDB3) == "table" and BattlePetTabsDB3 or {
 	Teams = {},
-	Groups = {},
 	Inactive = {},
+	Groups = nil,
+	LoadOutTeamIndex = nil,
 }
 
 -- temporary variables until the dependency addon loads
@@ -73,7 +74,6 @@ function addon:ADDON_LOADED(event, name)
 		addon:RegisterEvent("CURSOR_UPDATE")
 		addon:RegisterEvent("MOUNT_CURSOR_CLEAR")
 		addon:RegisterUnitEvent("UNIT_PET", "player")
-		addon:SetLoginLoadOut()
 	end
 end
 
@@ -511,18 +511,6 @@ function addon:DeleteTeam(team, tbr, tbi)
 	StaticPopup_Show(addonName .. "_TEAM_DELETE", nil, nil, { team, tbr, tbi })
 end
 
--- set loadout at login
-function addon:SetLoginLoadOut()
-	local index = tonumber(BattlePetTabsDB3.LoadOutTeamIndex, 10) or 0
-	if not index then
-		index = #BattlePetTabsDB3.Teams
-	end
-	if index > 0 then
-		local team = BattlePetTabsDB3.Teams[index]
-		addon:EquipTeamLoadout(team)
-	end
-end
-
 -- find a team index from the active teams
 function addon:GetTeamIndex(team, fallback)
 	for i, t in ipairs(BattlePetTabsDB3.Teams) do
@@ -531,16 +519,12 @@ function addon:GetTeamIndex(team, fallback)
 		end
 	end
 	if fallback then
-		local i = BattlePetTabsDB3.Teams
-		if i then
-			return i
-		end
+		return BattlePetTabsDB3.Teams[1] and 1 or 0
 	end
 end
 
 -- equip a team
 function addon:EquipTeamLoadout(team)
-	BattlePetTabsDB3.LoadOutTeamIndex = addon:GetTeamIndex(team, true)
 	addon.EquippedLoadOut = team
 	addon.LoadingLoadOut = true
 
