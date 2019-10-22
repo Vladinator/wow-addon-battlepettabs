@@ -1,2 +1,4 @@
 package-as: BattlePetTabs
 enable-nolib-creation: no
+ignore:
+  - .travis.yml
