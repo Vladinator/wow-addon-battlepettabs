@@ -1,3 +1,7 @@
+if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
+	return
+end
+
 local _G = _G
 local assert = assert
 local C_PetJournal = C_PetJournal
@@ -137,7 +141,7 @@ function addon:UPDATE()
 
 	-- force update the hover tooltip
 	local widget = GetMouseFocus()
-	if widget and type(widget) == "table" and type(widget.GetScript) == "function" then
+	if widget and type(widget) == "table" and type(widget.GetScript) == "function" and not widget:IsForbidden() then
 		local script = widget:GetScript("OnEnter")
 		if script then
 			script(widget)
