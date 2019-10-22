@@ -1,7 +1,9 @@
-## Interface: 80200
+## Interface: 80205
 ## Title: BattlePetTabs
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
 ## Author: Vladinator
 ## Version: 8.2.0.190810
 ## SavedVariables: BattlePetTabsDB3
+## X-Curse-Project-ID: 43438
+## X-WoWI-ID: 21376
 core.lua
