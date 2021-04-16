@@ -533,7 +533,7 @@ function addon:EquipTeamLoadout(team)
 	addon.LoadingLoadOut = true
 
 	if type(team) == "table" then
-		local recheck, firstPet
+		local recheck
 
 		for i = 1, MAX_ACTIVE_PETS do
 			local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal.GetPetLoadOutInfo(i)
@@ -542,23 +542,25 @@ function addon:EquipTeamLoadout(team)
 			if type(pet) == "table" then
 				if not locked then
 					local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
-					firstPet = petID
+					local petExists = C_PetJournal.GetPetInfoByPetID(petID)
 
-					if equippedPetID ~= petID then
-						C_PetJournal.SetPetLoadOutInfo(i, petID)
-						recheck = true
-					else
-						if equippedAbility1ID ~= ability1ID then
-							C_PetJournal.SetAbility(i, 1, ability1ID)
+					if petExists then
+						if equippedPetID ~= petID then
+							C_PetJournal.SetPetLoadOutInfo(i, petID)
 							recheck = true
-						end
-						if equippedAbility2ID ~= ability2ID then
-							C_PetJournal.SetAbility(i, 2, ability2ID)
-							recheck = true
-						end
-						if equippedAbility3ID ~= ability3ID then
-							C_PetJournal.SetAbility(i, 3, ability3ID)
-							recheck = true
+						else
+							if equippedAbility1ID ~= ability1ID then
+								C_PetJournal.SetAbility(i, 1, ability1ID)
+								recheck = true
+							end
+							if equippedAbility2ID ~= ability2ID then
+								C_PetJournal.SetAbility(i, 2, ability2ID)
+								recheck = true
+							end
+							if equippedAbility3ID ~= ability3ID then
+								C_PetJournal.SetAbility(i, 3, ability3ID)
+								recheck = true
+							end
 						end
 					end
 				end
@@ -577,7 +579,9 @@ function addon:EquipTeamLoadout(team)
 		end
 
 		-- update the pet journal UI
-		PetJournal_UpdatePetLoadOut()
+		if not InCombatLockdown() then
+			PetJournal_UpdatePetLoadOut()
+		end
 	end
 
 	addon.LoadingLoadOut = nil
@@ -593,17 +597,20 @@ function addon:IsTeamEquipped(team)
 			end
 			local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal.GetPetLoadOutInfo(i)
 			local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
-			if equippedPetID ~= petID then
-				return false
-			end
-			if equippedAbility1ID ~= ability1ID then
-				return false
-			end
-			if equippedAbility2ID ~= ability2ID then
-				return false
-			end
-			if equippedAbility3ID ~= ability3ID then
-				return false
+			local petExists = C_PetJournal.GetPetInfoByPetID(petID)
+			if petExists then
+				if equippedPetID ~= petID then
+					return false
+				end
+				if equippedAbility1ID ~= ability1ID then
+					return false
+				end
+				if equippedAbility2ID ~= ability2ID then
+					return false
+				end
+				if equippedAbility3ID ~= ability3ID then
+					return false
+				end
 			end
 		end
 	end
@@ -614,9 +621,10 @@ end
 function addon:GetTeamTexture(team)
 	local texture = "Interface\\Icons\\INV_Misc_QuestionMark"
 	if type(team) == "table" then
-		local _, firstPet = next(team)
+		local _, firstPet, petTexture = next(team)
 		if firstPet and firstPet[1] then
-			_, _, _, _, _, _, _, _, texture = C_PetJournal.GetPetInfoByPetID(firstPet[1])
+			_, _, _, _, _, _, _, _, petTexture = C_PetJournal.GetPetInfoByPetID(firstPet[1])
+			texture = petTexture or texture
 		end
 	end
 	return texture
