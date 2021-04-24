@@ -139,9 +139,9 @@ function addon:UPDATE()
 		end
 	end
 
-	-- force update the hover tooltip
+	-- force update the hover tooltip (we only allow frames related to our addon to avoid external taint issues)
 	local widget = GetMouseFocus()
-	if widget and type(widget) == "table" and type(widget.GetScript) == "function" and not widget:IsForbidden() then
+	if widget and not widget:IsForbidden() and strfind(widget:GetDebugName(), "^BattlePetTabs") then
 		local script = widget:GetScript("OnEnter")
 		if script then
 			script(widget)
