@@ -2,6 +2,8 @@ if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
 	return
 end
 
+local IS_DF = select(4, GetBuildInfo()) >= 100000 -- TODO: DF
+
 local _G = _G
 local assert = assert
 local C_PetJournal = C_PetJournal
@@ -75,7 +77,9 @@ function addon:ADDON_LOADED(event, name)
 		addon:CreateUI()
 		addon:RegisterEvent("BATTLE_PET_CURSOR_CLEAR")
 		addon:RegisterEvent("COMPANION_UPDATE")
-		addon:RegisterEvent("CURSOR_UPDATE")
+		if not IS_DF then -- TODO: DF
+			addon:RegisterEvent("CURSOR_UPDATE")
+		end
 		addon:RegisterEvent("MOUNT_CURSOR_CLEAR")
 		addon:RegisterUnitEvent("UNIT_PET", "player")
 	end
@@ -85,6 +89,8 @@ function addon:UPDATE()
 	-- enable or disable the new/moveTo button depending if we reached the limit or not
 	addon.Manager.flyout.new:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
 	addon.Manager.flyout.moveTo:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
+
+	-- TODO: DF checked indicator overlaps the texture
 
 	-- teams
 	for i, team in ipairs(addon.Teams) do
@@ -152,7 +158,7 @@ end
 -- additional events that trigger updates
 addon.BATTLE_PET_CURSOR_CLEAR = addon.UPDATE
 addon.COMPANION_UPDATE = addon.UPDATE
-addon.CURSOR_UPDATE = addon.UPDATE
+addon.CURSOR_UPDATE = addon.UPDATE -- TODO: DF
 addon.MOUNT_CURSOR_CLEAR = addon.UPDATE
 addon.UNIT_PET = addon.UPDATE
 
