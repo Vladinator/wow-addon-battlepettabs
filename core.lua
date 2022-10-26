@@ -1,8 +1,4 @@
-if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then
-	return
-end
-
-local IS_DF = select(4, GetBuildInfo()) >= 100000 -- TODO: DF
+if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then return end
 
 local _G = _G
 local assert = assert
@@ -20,14 +16,14 @@ local table = table
 local tonumber = tonumber
 local type = type
 
-local addonName = ...
-local addon = CreateFrame("Frame")
+local addonName = ... ---@type string
+local addon = CreateFrame("Frame") ---@class AddOnFrame : Frame
 addon:SetScript("OnEvent", function(self, event, ...) self[event](self, event, ...) end)
 
 -- variables
 local MAX_BATTLE_TABS = 10 -- 8 to 10 for most natural results
-local MAX_ACTIVE_PETS = MAX_ACTIVE_PETS or 3
-local HEAL_PET_SPELL = HEAL_PET_SPELL or 125439
+local MAX_ACTIVE_PETS = 3 -- AddOns/Blizzard_Collections/Blizzard_PetCollection.lua:2
+local HEAL_PET_SPELL = 125439 -- AddOns/Blizzard_Collections/Blizzard_PetCollection.lua:6
 local BATTLEPETTABSFLYOUT_BORDERWIDTH = 0
 local BATTLEPETTABSFLYOUT_ITEM_HEIGHT = 35
 local BATTLEPETTABSFLYOUT_ITEM_WIDTH = 35
@@ -44,7 +40,14 @@ local FLYOUT_COMMAND_TEAM = 5
 -- the recheck ticker handle to avoid bubbling events
 local RECHECK_TICKER
 
+---@class AddOnDB
+---@field public Teams TeamButton[]
+---@field public Inactive TeamButton[]
+---@field public Groups? any
+---@field public LoadOutTeamIndex? number
+
 -- load defaults or fallback to stored settings
+---@type AddOnDB
 BattlePetTabsDB3 = type(BattlePetTabsDB3) == "table" and BattlePetTabsDB3 or {
 	Teams = {},
 	Inactive = {},
@@ -72,14 +75,11 @@ function addon:ADDON_LOADED(event, name)
 	end
 	if addon.NumLoaded >= 2 then
 		addon.ADDON_LOADED = function() end
-		addon.PetJournalName, addon.NumLoaded = nil
+		addon.PetJournalName, addon.NumLoaded = nil, nil
 		addon:UnregisterEvent(event)
 		addon:CreateUI()
 		addon:RegisterEvent("BATTLE_PET_CURSOR_CLEAR")
 		addon:RegisterEvent("COMPANION_UPDATE")
-		if not IS_DF then -- TODO: DF
-			addon:RegisterEvent("CURSOR_UPDATE")
-		end
 		addon:RegisterEvent("MOUNT_CURSOR_CLEAR")
 		addon:RegisterUnitEvent("UNIT_PET", "player")
 	end
@@ -89,8 +89,6 @@ function addon:UPDATE()
 	-- enable or disable the new/moveTo button depending if we reached the limit or not
 	addon.Manager.flyout.new:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
 	addon.Manager.flyout.moveTo:SetEnabled(#BattlePetTabsDB3.Inactive < BATTLEPETTABSFLYOUT_MAX_ITEMS)
-
-	-- TODO: DF checked indicator overlaps the texture
 
 	-- teams
 	for i, team in ipairs(addon.Teams) do
@@ -181,9 +179,9 @@ function addon:CreateUI()
 	addon.Manager.button:SetScript("OnClick", addon.Widget.Manager.OnClick)
 	addon.Manager.button:SetScript("OnEnter", addon.Widget.Manager.OnEnter)
 	addon.Manager.button:SetScript("OnLeave", addon.Widget.Manager.OnLeave)
-	addon.Manager.button:SetScript("OnDragStart", nil)
-	addon.Manager.button:SetScript("OnDragStop", nil)
-	addon.Manager.button:SetScript("OnReceiveDrag", nil)
+	addon.Manager.button:SetScript("OnDragStart", nil) ---@diagnostic disable-line: param-type-mismatch
+	addon.Manager.button:SetScript("OnDragStop", nil) ---@diagnostic disable-line: param-type-mismatch
+	addon.Manager.button:SetScript("OnReceiveDrag", nil) ---@diagnostic disable-line: param-type-mismatch
 
 	-- setup the manager flyout
 	addon.Manager.flyout = addon:CreateFlyout(addon.Manager)
@@ -302,7 +300,7 @@ end
 
 -- create pet button
 function addon:CreatePetButton(id)
-	local frame = CreateFrame("Frame", addonName .. "Team" .. id)
+	local frame = CreateFrame("Frame", addonName .. "Team" .. id) ---@class TeamButton : Frame
 	frame:SetSize(42, 50)
 	frame:SetPoint("TOPLEFT")
 
@@ -329,12 +327,15 @@ function addon:CreatePetButton(id)
 	-- frame.button:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
 	frame.button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
 	frame.button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-	frame.button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD") -- TODO: "ADD" ?
+	local highlight = frame.button:CreateTexture(nil, "BORDER")
+	highlight:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+	highlight:SetBlendMode("ADD")
+	frame.button:SetCheckedTexture(highlight)
 
 	frame.icon = frame.button:CreateTexture(nil, "BORDER")
 	frame.icon:SetPoint("TOPLEFT", 1, -1)
 	frame.icon:SetPoint("BOTTOMRIGHT", -1, 1)
-	frame.icon:SetTexCoord(.1, .9, .1, .9)
+	frame.icon:SetTexCoord(0.1, 0.9, 0.1, 0.9)
 	frame.icon:SetTexture("Interface\\Icons\\Temp")
 
 	frame.count = frame.button:CreateFontString(nil, "BORDER", "NumberFontNormal")
@@ -343,7 +344,7 @@ function addon:CreatePetButton(id)
 
 	frame.overlay = frame.button:CreateTexture(nil, "ARTWORK", nil, -4)
 	frame.overlay:SetAllPoints()
-	frame.overlay:SetTexture(0, 0, 0, .8)
+	frame.overlay:SetColorTexture(0, 0, 0, 0.8)
 	frame.overlay:Hide()
 
 	return frame
@@ -388,8 +389,8 @@ function addon:MoveTo(src, dst)
 	end
 
 	-- team variables
-	local srcIsInactive, srcTeam, srcIndex = not not src.command, src.dbTeam
-	local dstIsInactive, dstTeam, dstIndex = not not dst.command, dst.dbTeam
+	local srcIsInactive, srcTeam, srcIndex = not not src.command, src.dbTeam, nil
+	local dstIsInactive, dstTeam, dstIndex = not not dst.command, dst.dbTeam, nil
 
 	-- active teams
 	for i, team in ipairs(BattlePetTabsDB3.Teams) do
@@ -595,28 +596,29 @@ end
 
 -- is team equipped
 function addon:IsTeamEquipped(team)
-	if type(team) == "table" then
-		for i = 1, MAX_ACTIVE_PETS do
-			local pet = team[i]
-			if type(pet) ~= "table" then
+	if not team or type(team) ~= "table" then
+		return false
+	end
+	for i = 1, MAX_ACTIVE_PETS do
+		local pet = team[i]
+		if type(pet) ~= "table" then
+			return i > 1
+		end
+		local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal.GetPetLoadOutInfo(i)
+		local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
+		local petExists = C_PetJournal.GetPetInfoByPetID(petID)
+		if petExists then
+			if equippedPetID ~= petID then
 				return false
 			end
-			local equippedPetID, equippedAbility1ID, equippedAbility2ID, equippedAbility3ID, locked = C_PetJournal.GetPetLoadOutInfo(i)
-			local petID, ability1ID, ability2ID, ability3ID = pet[1], pet[2], pet[3], pet[4]
-			local petExists = C_PetJournal.GetPetInfoByPetID(petID)
-			if petExists then
-				if equippedPetID ~= petID then
-					return false
-				end
-				if equippedAbility1ID ~= ability1ID then
-					return false
-				end
-				if equippedAbility2ID ~= ability2ID then
-					return false
-				end
-				if equippedAbility3ID ~= ability3ID then
-					return false
-				end
+			if equippedAbility1ID ~= ability1ID then
+				return false
+			end
+			if equippedAbility2ID ~= ability2ID then
+				return false
+			end
+			if equippedAbility3ID ~= ability3ID then
+				return false
 			end
 		end
 	end
@@ -803,9 +805,9 @@ do
 
 		function addon.Widget.PetButton.OnReceiveDrag(self)
 			if addon.IsDraggingInactiveTeam then
-				addon:MoveTo(addon.IsDraggingInactiveTeam, self:GetParent(), true, false)
+				addon:MoveTo(addon.IsDraggingInactiveTeam, self:GetParent())
 			elseif addon.IsDraggingTeam then
-				addon:MoveTo(addon.IsDraggingTeam, self:GetParent(), false, false)
+				addon:MoveTo(addon.IsDraggingTeam, self:GetParent())
 			end
 
 			addon.IsDraggingInactiveTeam = nil
@@ -880,7 +882,10 @@ do
 			-- button:SetNormalTexture("Interface\\Buttons\\UI-Quickslot2")
 			button:SetPushedTexture("Interface\\Buttons\\UI-Quickslot-Depress")
 			button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-			button:SetCheckedTexture("Interface\\Buttons\\CheckButtonHilight", "ADD") -- TODO: "ADD" ?
+			local highlight = button:CreateTexture(nil, "BORDER")
+			highlight:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+			highlight:SetBlendMode("ADD")
+			button:SetCheckedTexture(highlight)
 
 			button.icon = button:CreateTexture(nil, "BORDER")
 			button.icon:SetPoint("TOPLEFT", 1, -1)
@@ -894,7 +899,7 @@ do
 
 			button.overlay = button:CreateTexture(nil, "ARTWORK", nil, -4)
 			button.overlay:SetAllPoints()
-			button.overlay:SetTexture(0, 0, 0, .8)
+			button.overlay:SetColorTexture(0, 0, 0, 0.8)
 			button.overlay:Hide()
 
 			button.checked = button:CreateTexture(nil, "ARTWORK", nil, -3)
@@ -1017,9 +1022,9 @@ do
 
 			function addon.Widget.Flyout.Button.OnReceiveDrag(self)
 				if addon.IsDraggingInactiveTeam then
-					addon:MoveTo(addon.IsDraggingInactiveTeam, self, true, false)
+					addon:MoveTo(addon.IsDraggingInactiveTeam, self)
 				elseif addon.IsDraggingTeam then
-					addon:MoveTo(addon.IsDraggingTeam, self, false, false)
+					addon:MoveTo(addon.IsDraggingTeam, self)
 				end
 
 				addon.IsDraggingInactiveTeam = nil

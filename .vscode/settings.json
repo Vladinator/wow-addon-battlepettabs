@@ -1,0 +1,13 @@
+{
+    "Lua.diagnostics.globals": [
+        "PetJournal",
+        "StaticPopupDialogs",
+        "ACCEPT",
+        "CANCEL",
+        "DELETE",
+        "StaticPopup_Show",
+        "PetJournal_UpdatePetLoadOut",
+        "ITEM_QUALITY_COLORS",
+        "GameTooltip"
+    ]
+}
