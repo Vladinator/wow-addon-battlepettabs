@@ -1,8 +1,9 @@
-## Interface: 100000
+## Interface: 100100
+## IconTexture: 646989
 ## Title: BattlePetTabs
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
 ## Author: Vladinator
-## Version: 10.0.0.221026
+## Version: 10.1.0.230503
 ## SavedVariables: BattlePetTabsDB3
 ## X-Curse-Project-ID: 43438
 ## X-WoWI-ID: 21376
