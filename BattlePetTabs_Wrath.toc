@@ -1,6 +1,6 @@
 ## Interface: 30402
 ## IconTexture: 646989
-## Title: BattlePetTabs
+## Title: BattlePetTabs (Placeholder)
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
 ## Author: Vladinator
 ## Version: 3.4.2.230919
