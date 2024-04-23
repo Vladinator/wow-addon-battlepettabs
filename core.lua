@@ -6,9 +6,9 @@ local C_PetJournal = C_PetJournal
 local ClearCursor = ClearCursor
 local CreateFrame = CreateFrame
 local format = format
-local GetAddOnInfo = GetAddOnInfo
+local GetAddOnInfo = GetAddOnInfo or C_AddOns.GetAddOnInfo ---@diagnostic disable-line: deprecated
 local ipairs = ipairs
-local IsAddOnLoaded = IsAddOnLoaded
+local IsAddOnLoaded = IsAddOnLoaded or C_AddOns.IsAddOnLoaded ---@diagnostic disable-line: deprecated
 local math = math
 local next = next
 local pairs = pairs
@@ -58,6 +58,7 @@ BattlePetTabsDB3 = type(BattlePetTabsDB3) == "table" and BattlePetTabsDB3 or {
 -- temporary variables until the dependency addon loads
 addon.PetJournalName = "Blizzard_Collections"
 addon.NumLoaded = 0
+addon.TeamButtonNamePrefix = "^" .. addonName .. "Team"
 
 -- loads the UI once our addon and the pet journal have loaded
 function addon:ADDON_LOADED(event, name)
@@ -143,12 +144,30 @@ function addon:UPDATE()
 		end
 	end
 
-	-- force update the hover tooltip (we only allow frames related to our addon to avoid external taint issues)
-	local widget = GetMouseFocus()
-	if widget and not widget:IsForbidden() and strfind(widget:GetDebugName(), "^BattlePetTabs") then
-		local script = widget:GetScript("OnEnter")
-		if script then
-			script(widget)
+	-- force update the hover tooltip if we're hovering over our team button
+	local focus ---@type TeamButton?
+	if GetMouseFocus then
+		---@diagnostic disable-next-line: assign-type-mismatch
+		focus = GetMouseFocus() ---@type TeamButton?
+	else
+		---@diagnostic disable-next-line: undefined-global
+		focus = GetMouseFoci()[1]
+	end
+	if focus and not focus:IsForbidden() and strfind(focus:GetDebugName(), addon.TeamButtonNamePrefix) then
+		local frame = focus
+		while frame do
+			---@diagnostic disable-next-line: assign-type-mismatch
+			local test = frame:GetParent() ---@type TeamButton?
+			if not test then
+				break
+			end
+			if not strfind(test:GetDebugName(), addon.TeamButtonNamePrefix) then
+				break
+			end
+			frame = test
+		end
+		if not frame:IsForbidden() and frame:IsMouseOver() and frame:GetParent() == addon.Container then
+			addon.Widget.PetButton.OnEnter(frame.button)
 		end
 	end
 end
@@ -163,7 +182,7 @@ addon.UNIT_PET = addon.UPDATE
 -- create the addon UI
 function addon:CreateUI()
 	-- setup the container
-	addon.Container = CreateFrame("Frame", addonName .. "Frame", PetJournal)
+	addon.Container = CreateFrame("Frame", addonName .. "Frame", PetJournal) ---@class BattlePetTabsContainer : Frame
 	addon.Container:SetParent(PetJournal)
 	addon.Container:SetSize(42, 50)
 	addon.Container:ClearAllPoints()
@@ -171,7 +190,7 @@ function addon:CreateUI()
 	addon.Container:SetScript("OnShow", addon.Widget.Container.OnShow)
 
 	-- setup the manager button
-	addon.Manager = addon:CreatePetButton(0)
+	addon.Manager = addon:CreatePetButton(0) ---@class TeamButton
 	addon.Manager:SetParent(addon.Container)
 	addon.Manager:ClearAllPoints()
 	addon.Manager:SetPoint("TOPLEFT", "$parent", "BOTTOMLEFT")
@@ -184,7 +203,7 @@ function addon:CreateUI()
 	addon.Manager.button:SetScript("OnReceiveDrag", nil) ---@diagnostic disable-line: param-type-mismatch
 
 	-- setup the manager flyout
-	addon.Manager.flyout = addon:CreateFlyout(addon.Manager)
+	addon.Manager.flyout = addon:CreateFlyout(addon.Manager) ---@class FlyoutFrame
 
 	-- add new team button
 	addon.Manager.flyout.new = addon.Manager.flyout:CreateButton(FLYOUT_COMMAND_NEW)
@@ -218,7 +237,7 @@ function addon:CreateUI()
 		team.icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
 
 		-- setup the team flyout
-		team.flyout = addon:CreateFlyout(team)
+		team.flyout = addon:CreateFlyout(team) ---@class FlyoutFrame
 
 		-- create team flyout buttons
 		team.flyout.rename = team.flyout:CreateButton(FLYOUT_COMMAND_RENAME)
@@ -352,7 +371,7 @@ end
 
 -- create flyout frame
 function addon:CreateFlyout(parent)
-	local frame = CreateFrame("Frame", "$parentFlyout", parent or UIParent)
+	local frame = CreateFrame("Frame", "$parentFlyout", parent or UIParent) ---@class FlyoutFrame : Frame
 	frame:Hide()
 	frame:SetPoint("TOPLEFT", "$parent", "TOPRIGHT", 0, -8)
 	frame:SetSize(1, 1) -- otherwise it's invisible
@@ -856,7 +875,7 @@ do
 			local numButtons = #self
 			local buttonIndex = numButtons + 1
 
-			local button = CreateFrame("CheckButton", "$parent" .. buttonIndex, self)
+			local button = CreateFrame("CheckButton", "$parent" .. buttonIndex, self) ---@class FlyoutCheckButton : CheckButton
 			button.command = command
 			button:SetSize(BATTLEPETTABSFLYOUT_ITEM_WIDTH, BATTLEPETTABSFLYOUT_ITEM_HEIGHT)
 			button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
