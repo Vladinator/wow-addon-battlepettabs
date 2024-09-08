@@ -1,10 +1,12 @@
-## Interface: 30402
+## Interface: 40400
 ## IconTexture: 646989
 ## Title: BattlePetTabs (Placeholder)
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
 ## Author: Vladinator
-## Version: 3.4.2.230919
+## Version: 4.4.0.240908
 ## SavedVariables: BattlePetTabsDB3
 ## X-Curse-Project-ID: 43438
 ## X-WoWI-ID: 21376
+## X-Wago-ID: yQKyOEN7
+## X-AddonProvider: github
 #core.lua
