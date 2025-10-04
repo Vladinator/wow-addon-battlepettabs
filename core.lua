@@ -9,6 +9,7 @@ local format = format
 local GetAddOnInfo = GetAddOnInfo or C_AddOns.GetAddOnInfo ---@diagnostic disable-line: deprecated
 local ipairs = ipairs
 local IsAddOnLoaded = IsAddOnLoaded or C_AddOns.IsAddOnLoaded ---@diagnostic disable-line: deprecated
+local IsSpellKnown = IsSpellKnown or C_SpellBook.IsSpellInSpellBook ---@diagnostic disable-line: deprecated
 local math = math
 local next = next
 local pairs = pairs
