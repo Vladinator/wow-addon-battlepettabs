@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 110002, 120000
 ## IconTexture: 646989
 ## Title: BattlePetTabs
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
