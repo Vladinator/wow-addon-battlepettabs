@@ -1,21 +1,21 @@
 if WOW_PROJECT_ID ~= WOW_PROJECT_MAINLINE then return end
 
-local _G = _G
 local assert = assert
 local C_PetJournal = C_PetJournal
 local ClearCursor = ClearCursor
 local CreateFrame = CreateFrame
 local format = format
-local GetAddOnInfo = GetAddOnInfo or C_AddOns.GetAddOnInfo ---@diagnostic disable-line: deprecated
+local GetAddOnInfo = GetAddOnInfo or C_AddOns.GetAddOnInfo ---@diagnostic expect-line: undefined-global
 local ipairs = ipairs
-local IsAddOnLoaded = IsAddOnLoaded or C_AddOns.IsAddOnLoaded ---@diagnostic disable-line: deprecated
-local IsSpellKnown = IsSpellKnown or C_SpellBook.IsSpellInSpellBook ---@diagnostic disable-line: deprecated
+local IsAddOnLoaded = IsAddOnLoaded or C_AddOns.IsAddOnLoaded ---@diagnostic expect-line: undefined-global
+local IsSpellKnown = IsSpellKnown or C_SpellBook.IsSpellInSpellBook ---@diagnostic expect-line: deprecated
 local math = math
 local next = next
 local pairs = pairs
 local table = table
 local tonumber = tonumber
 local type = type
+local issecretvalue = issecretvalue or function() end
 
 local addonName = ... ---@type string
 local addon = CreateFrame("Frame") ---@class AddOnFrame : Frame
@@ -146,30 +146,36 @@ function addon:UPDATE()
 	end
 
 	-- force update the hover tooltip if we're hovering over our team button
-	local focus ---@type TeamButton?
-	if GetMouseFocus then
-		---@diagnostic disable-next-line: assign-type-mismatch
-		focus = GetMouseFocus() ---@type TeamButton?
-	else
-		---@diagnostic disable-next-line: undefined-global
-		focus = GetMouseFoci()[1]
+	---@diagnostic expect-next-line: assign-type-mismatch
+	local focus = GetMouseFoci()[1] ---@type TeamButton?
+	if not focus or focus:IsForbidden() then
+		return
 	end
-	if focus and not focus:IsForbidden() and strfind(focus:GetDebugName(), addon.TeamButtonNamePrefix) then
-		local frame = focus
-		while frame do
-			---@diagnostic disable-next-line: assign-type-mismatch
-			local test = frame:GetParent() ---@type TeamButton?
-			if not test then
-				break
-			end
-			if not strfind(test:GetDebugName(), addon.TeamButtonNamePrefix) then
-				break
-			end
-			frame = test
+	local focusName = focus:GetDebugName()
+	if issecretvalue(focusName) or not focusName then
+		return
+	end
+	if not strfind(focus:GetDebugName(), addon.TeamButtonNamePrefix) then
+		return
+	end
+	local frame = focus
+	while frame do
+		---@diagnostic disable-next-line: assign-type-mismatch
+		local test = frame:GetParent() ---@type TeamButton?
+		if not test then
+			break
 		end
-		if not frame:IsForbidden() and frame:IsMouseOver() and frame:GetParent() == addon.Container then
-			addon.Widget.PetButton.OnEnter(frame.button)
+		local testName = test:GetDebugName()
+		if issecretvalue(testName) or not testName then
+			break
 		end
+		if not strfind(testName, addon.TeamButtonNamePrefix) then
+			break
+		end
+		frame = test
+	end
+	if not frame:IsForbidden() and frame:IsMouseOver() and frame:GetParent() == addon.Container then
+		addon.Widget.PetButton.OnEnter(frame.button)
 	end
 end
 
@@ -501,7 +507,7 @@ end
 
 -- can copy loadout
 function addon:CanCopyLoadout()
-	if not IsSpellKnown(HEAL_PET_SPELL) or not C_PetJournal.IsJournalUnlocked() or C_PetBattles.IsInBattle() then
+	if not IsSpellKnown(HEAL_PET_SPELL, false) or not C_PetJournal.IsJournalUnlocked() or C_PetBattles.IsInBattle() then
 		return false -- we don't know how to use the pets, the journal is locked, or we are in a battle
 	end
 
@@ -647,7 +653,7 @@ end
 
 -- get team texture
 function addon:GetTeamTexture(team)
-	local texture = "Interface\\Icons\\INV_Misc_QuestionMark"
+	local texture = "Interface\\Icons\\INV_Misc_QuestionMark" ---@type string|number
 	if type(team) == "table" then
 		local _, firstPet, petTexture = next(team)
 		if firstPet and firstPet[1] then
