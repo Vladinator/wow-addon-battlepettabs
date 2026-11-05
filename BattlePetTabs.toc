@@ -1,12 +1,12 @@
-## Interface: 110002, 120000
+## Interface: 11509, 16001, 20506, 30405, 40402, 50504, 120105, 120107
 ## IconTexture: 646989
 ## Title: BattlePetTabs
 ## Notes: Expands the Pet Journal to show tabs for easy team management!
 ## Author: Vladinator
-## Version: 12.0.0.260119
+## Version: 12.1.5.261105
 ## SavedVariables: BattlePetTabsDB3
 ## X-Curse-Project-ID: 43438
 ## X-WoWI-ID: 21376
 ## X-Wago-ID: yQKyOEN7
 ## X-AddonProvider: github
-core.lua
+core.lua [AllowLoadGameType mainline]
